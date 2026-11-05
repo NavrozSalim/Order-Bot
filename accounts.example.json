@@ -1,0 +1,13 @@
+{
+  "us": {
+    "amazon": [{ "name": "company-a-amazon", "chrome_profile": "Profile 1", "email": "" }],
+    "ebay": [{ "name": "company-a-ebay", "chrome_profile": "Profile 2", "email": "" }]
+  },
+  "au": {
+    "amazon_au": [{ "name": "company-a-amazon-au", "chrome_profile": "Profile 3", "email": "" }],
+    "ebay_au": [],
+    "costco_au": [],
+    "costway_au": [],
+    "vevor_au": []
+  }
+}

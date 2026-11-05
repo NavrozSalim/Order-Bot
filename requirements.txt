@@ -1,0 +1,4 @@
+openpyxl>=3.1
+playwright>=1.45
+pytest>=8
+requests>=2.31

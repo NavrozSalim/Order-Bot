@@ -1,0 +1,6 @@
+{
+  "server": "https://your-app.example.com",
+  "token": "",
+  "poll_seconds": 15,
+  "progress_seconds": 20
+}

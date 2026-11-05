@@ -1,0 +1,13 @@
+accounts.json
+output/
+chrome-profiles/
+Profile */
+User Data/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.tmp.xlsx
+# real customer order exports must never be committed
+*order file*.xlsx
+agent.json
+work/
