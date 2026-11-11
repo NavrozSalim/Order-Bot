@@ -12,6 +12,7 @@ Each marketplace is configured in portals.json (copy portals.example.json):
       "orders_url": "https://<portal>/orders",   # page the steps start on
       "steps": [{"click": "text=Open Orders"}, {"wait_ms": 1500}],   # optional, before the download
       "download_click": "button:has-text('Export')",                 # optional; blank = try Export/Download buttons
+      "download_row_text": "Pending Orders",                        # optional; export dashboards: download the newest row with this text
       "login_url_parts": ["/login", "/signin"]                       # optional
     },
     "bigw": { ... }
@@ -79,7 +80,7 @@ def _signed_out(page, cfg):
     if any(p in url for p in parts):
         return True
     try:
-        return page.locator("input[type=password]").count() > 0
+        return page.locator("input[type=password]:visible").count() > 0
     except Exception:
         return False
 
@@ -104,6 +105,14 @@ def _download_selector(page, cfg):
     configured = str(cfg.get("download_click") or "").strip()
     if configured:
         return configured
+    row_text = str(cfg.get("download_row_text") or "").strip()
+    if row_text:
+        # Export-request dashboards list one row per export: download the newest row with this text.
+        sel = f"tr:has-text('{row_text}') >> a:has-text('Download'), tr:has-text('{row_text}') >> button:has-text('Download')"
+        if page.locator(sel).count() > 0:
+            return sel
+        raise PortalError(f"No Download link found in a row containing '{row_text}'. Request the export in the "
+                          "portal first, or check 'download_row_text' in portals.json.")
     for sel in DEFAULT_DOWNLOAD_CLICKS:
         try:
             if page.locator(sel).count() > 0:
@@ -125,6 +134,7 @@ def fetch_orders_file(marketplace, cfg, dest_dir, *, session_factory=BrowserSess
             page.goto(cfg["orders_url"], wait_until="domcontentloaded")
             page.wait_for_timeout(int(cfg.get("settle_ms", 1500)))
             if _signed_out(page, cfg):
+                print(f"[portal] looks signed out at {page.url}")
                 raise PortalError(f"Sign-in needed: sign in to the {label} seller portal in the "
                                   f"'{cfg.get('chrome_profile') or cfg.get('user_data_dir')}' Chrome profile on "
                                   f"this laptop, then click Fetch again.")

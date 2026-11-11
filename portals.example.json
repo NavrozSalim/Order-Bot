@@ -11,6 +11,7 @@
     "debug_port": 9291,
     "orders_url": "<address of the BigW seller portal page that lists pending orders>",
     "steps": [],
-    "download_click": ""
+    "download_click": "",
+    "download_row_text": "Pending Orders"
   }
 }
