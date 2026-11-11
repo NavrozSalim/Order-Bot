@@ -11,6 +11,8 @@ class Amazon(Vendor):
     region = "us"
     base = "https://www.amazon.com"
     stock_selectors = ["#availability", "#availabilityInsideBuyBox_feature_div", "#outOfStock"]
+    price_selectors = ["#corePrice_feature_div .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-offscreen",
+                       "#apex_desktop .a-price .a-offscreen", "#price_inside_buybox", "#priceblock_ourprice"]
     qty_selectors = ["select#quantity", "#quantity"]
     add_selectors = ["#add-to-cart-button", "input[name='submit.add-to-cart']"]
     cart_remove = ["input[value='Delete']", "span[data-action='delete'] input", "input[data-action='delete']"]

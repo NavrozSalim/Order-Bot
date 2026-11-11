@@ -4,6 +4,7 @@ The bot never solves captchas or 2FA. When one shows up the line fails and the r
 Selectors in the vendor modules are best-effort starting points and need a supervised dry-run per vendor.
 """
 from core.address import AU_STATES, VALID_STATE_CODES, is_po_box, state_name
+from core.price import parse_price
 from core.stock import parse_stock
 
 
@@ -108,6 +109,7 @@ class Vendor:
     cart_url = ""
     cart_remove = []
     stock_selectors = []
+    price_selectors = []        # first element whose text holds a money amount is the unit price
     qty_selectors = []
     add_selectors = []
 
@@ -158,6 +160,19 @@ class Vendor:
                 continue
             if n is not None:
                 return n
+        return None
+
+    def read_price(self, page):
+        """Unit price shown on the product page, or None when no selector shows one."""
+        for sel in self.price_selectors:
+            try:
+                if page.locator(sel).count() == 0:
+                    continue
+                p = parse_price(page.locator(sel).first.inner_text())
+            except Exception:
+                continue
+            if p is not None and p > 0:
+                return p
         return None
 
     def check_sku(self, page, vendor_sku):

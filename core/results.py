@@ -13,6 +13,7 @@ UNMAPPED = "unmapped_sku"
 WRONG_VENDOR = "wrong_vendor"
 STOCK_UNKNOWN = "stock_unknown"
 OUT_OF_STOCK = "out_of_stock"
+PRICE_CHANGED = "price_changed"   # vendor price above the mapping's Max Price: not bought
 READY = "ready_for_payment"
 PURCHASED = "purchased"
 FAILED = "failed"

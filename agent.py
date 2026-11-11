@@ -16,6 +16,9 @@ import requests
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = {"us": "run_us.py", "au": "run_au.py"}
 STDOUT_LIMIT = 20000
+# Job kinds this agent handles. "fetch_orders" downloads the marketplace orders file from the seller portal;
+# "purchase" buys one order (its mapping carries Max Price, which this bot enforces).
+KINDS = "run,fetch_orders,purchase"
 
 
 def load_config(path=ROOT / "agent.json"):
@@ -38,16 +41,25 @@ def build_command(job, python, workdir):
     return cmd + ["--accounts-file", str(workdir / "accounts.json"), "--output-dir", str(workdir / "output")]
 
 
+def _default_fetcher(marketplace, dest_dir, root):
+    from core.portal import fetch_orders_file, load_portals, portal_config
+    cfg = portal_config(load_portals(Path(root) / "portals.json"), marketplace)
+    return fetch_orders_file(marketplace, cfg, dest_dir)
+
+
 class Agent:
-    def __init__(self, cfg, http=requests, sleep=time.sleep, popen=subprocess.Popen, root=ROOT):
+    def __init__(self, cfg, http=requests, sleep=time.sleep, popen=subprocess.Popen, root=ROOT,
+                 fetcher=_default_fetcher):
         self.cfg, self.http, self.sleep, self.popen, self.root = cfg, http, sleep, popen, Path(root)
+        self.fetcher = fetcher
         self.headers = {"Authorization": f"Bearer {cfg['token']}"}
 
     def url(self, path):
         return self.cfg["server"] + path
 
     def next_job(self):
-        r = self.http.get(self.url("/api/v1/ingest/order-bot/next-job/"), headers=self.headers, timeout=30)
+        r = self.http.get(self.url("/api/v1/ingest/order-bot/next-job/"), headers=self.headers,
+                          params={"kinds": KINDS}, timeout=30)
         r.raise_for_status()
         data = r.json()
         return data if data.get("job_id") else None
@@ -82,7 +94,46 @@ class Agent:
         except Exception:
             return False
 
+    def _complete(self, job, code, text, out):
+        for _ in range(5):
+            try:
+                self._post(job["complete_url"], {"exit_code": code, "stdout": text[-STDOUT_LIMIT:]}, out)
+                return
+            except Exception:
+                self.sleep(10)
+
+    def run_fetch(self, job):
+        """Download the orders file from the seller portal and upload it; the server imports and checks it."""
+        work = self.root / "work" / job["job_id"]
+        out = work / "output"
+        out.mkdir(parents=True, exist_ok=True)
+        code, text = 1, ""
+        path = None
+        try:
+            path = Path(self.fetcher(job["marketplace"], work, self.root))
+            with open(path, "rb") as fh:
+                r = self.http.post(self.url(job["upload_url"]), headers=self.headers,
+                                   files={"file": (path.name, fh)}, timeout=180)
+            try:
+                body = r.json()
+            except Exception:
+                body = {}
+            if r.status_code >= 400:
+                text = f"Upload refused: {body.get('error') or body.get('detail') or r.status_code}"
+            else:
+                code, text = 0, body.get("message") or "Orders file uploaded."
+        except Exception as e:
+            text = str(e) or type(e).__name__
+        finally:
+            # The orders file holds customer addresses: do not keep it on the laptop.
+            if path is not None:
+                Path(path).unlink(missing_ok=True)
+        self._complete(job, code, text, out)
+        return code
+
     def run_job(self, job):
+        if job.get("kind") == "fetch_orders":
+            return self.run_fetch(job)
         work = self.root / "work" / job["job_id"]
         out = work / "output"
         out.mkdir(parents=True, exist_ok=True)
@@ -115,12 +166,7 @@ class Agent:
             (work / "orders.xlsx").unlink(missing_ok=True)
             (work / "accounts.json").unlink(missing_ok=True)
         text = stdout_path.read_text(encoding="utf-8", errors="replace")[-STDOUT_LIMIT:] if stdout_path.exists() else ""
-        for _ in range(5):
-            try:
-                self._post(job["complete_url"], {"exit_code": code, "stdout": text}, out)
-                break
-            except Exception:
-                self.sleep(10)
+        self._complete(job, code, text, out)
         return code
 
     def loop(self):
@@ -131,7 +177,10 @@ class Agent:
             except Exception as e:
                 print(f"poll failed: {e}")
                 job = None
-            if job:
+            if job and job.get("kind") == "fetch_orders":
+                print(f"fetch {job['job_id']}: {job['marketplace']} orders file for {job.get('store_name', '')}")
+                print(f"  exit code {self.run_job(job)}")
+            elif job:
                 print(f"run {job['job_id']}: {job['marketplace']} / {job['account']}{' PLACE' if job['place'] else ''}")
                 print(f"  exit code {self.run_job(job)}")
             else:

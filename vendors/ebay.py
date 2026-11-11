@@ -10,6 +10,8 @@ class Ebay(Vendor):
     name = "ebay"
     region = "us"
     stock_selectors = ["#qtySubTxt", ".d-quantity__availability", "[data-testid='x-quantity'] .x-quantity__availability"]
+    price_selectors = [".x-price-primary .ux-textspans", "[data-testid='x-price-primary']", "[itemprop='price']",
+                       "#prcIsum"]
     qty_selectors = ["#qtyTextBox", "input[name='quantity']", "[data-testid='x-quantity'] input"]
     add_selectors = ["a#binBtn_btn", "a:has-text('Buy It Now')", "button:has-text('Buy It Now')"]
     order_re = re.compile(r"\b\d{2}-\d{5}-\d{5}\b")

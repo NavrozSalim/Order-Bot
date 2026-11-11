@@ -102,3 +102,29 @@ The agent downloads the two files and the generated accounts file, runs `run_us.
 remaining and log files while it works and again at the end, then deletes the order export and accounts file from
 `work/`. Cancelling a run in the page stops the bot on the laptop. `chrome_profile` / `user_data_dir` on a purchase
 account refer to folders on this laptop. Screenshots stay on the laptop under `work/<run id>/output/screenshots/`.
+
+## Auto Purchasing (web app Orders page)
+
+The laptop agent (`run_agent.bat`) now also takes two jobs from the Orders page of the web app:
+
+* **Fetch** (`fetch_orders`): opens the Kogan or BigW seller portal in its own signed-in Chrome profile,
+  downloads the open-orders file and uploads it. The web app imports it and checks every order.
+* **Process** (`purchase`): buys one order the user clicked Process on. The web app sends a one-order orders file
+  and a mapping whose fifth column, **Max Price**, is the vendor price it checked. The bot reads the price on the
+  product page and does not buy when it is above Max Price (`price_changed`) or cannot be read (`failed`).
+  `vendors/*.py` `price_selectors` are best-effort like the other selectors; check them in a supervised dry-run.
+
+Seller portal setup (once per laptop):
+
+```
+copy portals.example.json portals.json      # local only, git-ignored
+```
+
+For each marketplace set `chrome_profile` (or `user_data_dir`), `orders_url` (the page with the open orders), any
+`steps` needed before the download, and `download_click` (the button that downloads the file). Then start Chrome on
+that profile and **sign in to the seller portal once**. The agent never types a password: when the portal shows a
+login page the Fetch stops with "Sign-in needed". Steps: `{"click": sel}`, `{"goto": url}`, `{"wait_for": sel}`,
+`{"wait_ms": n}`, `{"fill": sel, "value": text}`.
+
+The agent asks the server only for the job kinds it supports (`run,fetch_orders,purchase`). An older agent keeps
+getting file runs only, so it never buys an order without the Max Price check.

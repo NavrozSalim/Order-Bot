@@ -14,6 +14,8 @@ class CostwayAU(Vendor):
     cart_url = "https://au.costway.com/cart"
     cart_remove = ["button:has-text('Remove')", "a:has-text('Remove')", ".cart-item .delete"]
     stock_selectors = [".stock-status", ".product-stock", "[class*='inventory']"]
+    price_selectors = [".product-info-price [data-price-type='finalPrice'] .price", ".product-info-price .price",
+                       "[data-price-type='finalPrice'] .price"]
     qty_selectors = ["input.quantity", "input[name='qty']", "input[name='quantity']"]
     add_selectors = ["button:has-text('Add to Cart')", "button:has-text('ADD TO CART')"]
     place_selectors = ["button:has-text('Place Order')", "button:has-text('Pay Now')"]

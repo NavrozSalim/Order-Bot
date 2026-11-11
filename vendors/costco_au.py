@@ -11,6 +11,7 @@ class CostcoAU(Vendor):
     cart_url = "https://www.costco.com.au/cart"
     cart_remove = ["button:has-text('Remove')", "a:has-text('Remove')"]
     stock_selectors = ["[data-testid='stock-status']", ".stock-status", ".product-stock"]
+    price_selectors = ["[data-testid='product-price']", ".product-price-amount", ".you-pay-value", ".price-value"]
     qty_selectors = ["input[name='quantity']", "#quantity", "input.quantity"]
     add_selectors = ["button#addToCartButton", "button:has-text('Add to Cart')", "button:has-text('Add to cart')"]
     suggestions = ["[role='option']", ".address-suggestion", "ul.suggestions li"]

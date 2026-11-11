@@ -98,6 +98,16 @@ def _process(line, mapping, account, vendor, store, place, lazy):
                            shot=session.screenshot(page, f"{shot_base}_stock_unknown.png"))
         if stock < line.buy_qty:
             return _result(line, R.OUT_OF_STOCK, entry, stock, error=f"need {line.buy_qty}")
+        if entry.max_price is not None:
+            # Auto Purchasing price guard: never pay more than the price the web app checked.
+            price = vendor.read_price(page)
+            if price is None:
+                return _result(line, R.FAILED, entry, stock,
+                               error=f"price not readable on the page; not bought (Max Price {entry.max_price})",
+                               shot=session.screenshot(page, f"{shot_base}_price_unknown.png"))
+            if price > entry.max_price:
+                return _result(line, R.PRICE_CHANGED, entry, stock,
+                               error=f"vendor price {price} is above the checked price {entry.max_price}")
         vendor.check_sku(page, entry.vendor_sku)
         vendor.clear_cart(page)
         vendor.open_product(page, entry.url)

@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import openpyxl
 
 from .errors import MappingError
+from .price import parse_max_price
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ VENDOR_HOSTS = {
 }
 
 HEADERS = ("sku", "vendor", "vendor url", "vendor sku")
+# Optional fifth column. When set, the bot buys the line only if the vendor page price is not above it.
+MAX_PRICE_HEADER = "max price"
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,7 @@ class MapEntry:
     vendor: str
     url: str
     vendor_sku: str
+    max_price: object = None  # Decimal per unit, or None when the mapping has no Max Price
 
 
 def sku_key(sku):
@@ -68,9 +72,10 @@ def load_mapping(path, region):
     header = [_s(c).casefold() for c in next(rows, ())]
     if tuple(header[:4]) != HEADERS:
         raise MappingError("mapping header row must be: SKU | Vendor | Vendor URL | Vendor SKU")
+    has_max = len(header) > 4 and header[4] == MAX_PRICE_HEADER
     out = {}
     for n, row in enumerate(rows, start=2):
-        row = list(row) + [None] * 4
+        row = list(row) + [None] * 5
         sku, vendor, url, vsku = (_s(c) for c in row[:4])
         if not (sku or vendor or url or vsku):
             continue
@@ -85,8 +90,14 @@ def load_mapping(path, region):
             check_vendor_url(vendor, url)
         except MappingError as e:
             raise MappingError(f"mapping row {n}: {e}") from None
+        max_price = None
+        if has_max:
+            try:
+                max_price = parse_max_price(row[4])
+            except ValueError as e:
+                raise MappingError(f"mapping row {n}: {e}") from None
         k = sku_key(sku)
         if k in out:
             raise MappingError(f"mapping row {n}: SKU {sku!r} appears more than once")
-        out[k] = MapEntry(sku, vendor, url, vsku)
+        out[k] = MapEntry(sku, vendor, url, vsku, max_price)
     return out

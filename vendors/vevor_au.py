@@ -14,6 +14,7 @@ class VevorAU(Vendor):
     cart_url = "https://www.vevor.com.au/cart"
     cart_remove = ["button:has-text('Remove')", "a:has-text('Delete')", ".cart-item .delete"]
     stock_selectors = [".stock-status", ".product-stock", "[class*='stock']"]
+    price_selectors = [".product-info-price .price", ".product-price", "[class*='price'] .price"]
     qty_selectors = ["input.quantity", "input[name='qty']", "input[name='quantity']"]
     add_selectors = ["button:has-text('Add to Cart')", "button:has-text('ADD TO CART')"]
     place_selectors = ["button:has-text('Place Order')", "button:has-text('Pay Now')"]
