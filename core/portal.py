@@ -13,6 +13,7 @@ Each marketplace is configured in portals.json (copy portals.example.json):
       "steps": [{"click": "text=Open Orders"}, {"wait_ms": 1500}],   # optional, before the download
       "download_click": "button:has-text('Export')",                 # optional; blank = try Export/Download buttons
       "download_row_text": "Pending Orders",                        # optional; export dashboards: download the newest row with this text
+      "wait_first_row_text": "COMPLETED", "refresh_click": "button:has-text('Refresh')",  # optional; wait for the newest export row
       "login_url_parts": ["/login", "/signin"]                       # optional
     },
     "bigw": { ... }
@@ -100,6 +101,29 @@ def _run_step(page, step):
         raise PortalError(f"Unknown portal step: {step}")
 
 
+def _wait_first_row(page, cfg, label):
+    """Export dashboards: wait until the newest row (the export just requested) shows e.g. COMPLETED."""
+    want = str(cfg.get("wait_first_row_text") or "").strip().lower()
+    if not want:
+        return
+    refresh = str(cfg.get("refresh_click") or "").strip()
+    row = page.locator("tbody tr").first
+    for _ in range(int(cfg.get("wait_first_row_tries", 30))):
+        try:
+            if row.count() > 0 and want in (row.inner_text(timeout=3000) or "").lower():
+                return
+        except Exception:
+            pass
+        if refresh:
+            try:
+                page.locator(refresh).first.click(timeout=3000)
+            except Exception:
+                pass
+        page.wait_for_timeout(3000)
+    raise PortalError(f"The {label} export is still not '{cfg.get('wait_first_row_text')}' after waiting. "
+                      "Try Fetch again in a minute.")
+
+
 def _download_selector(page, cfg):
     """The configured download_click, or the first common Export / Download control on the page."""
     configured = str(cfg.get("download_click") or "").strip()
@@ -145,6 +169,7 @@ def fetch_orders_file(marketplace, cfg, dest_dir, *, session_factory=BrowserSess
                     raise
                 except Exception as e:
                     raise PortalError(f"{label} portal step {step} failed: {type(e).__name__}: {e}"[:400]) from None
+            _wait_first_row(page, cfg, label)
             selector = _download_selector(page, cfg)
             try:
                 with page.expect_download(timeout=int(cfg.get("download_timeout_ms", 120000))) as info:

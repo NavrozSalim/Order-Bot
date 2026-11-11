@@ -9,9 +9,16 @@
   "bigw": {
     "chrome_profile": "BigW Seller",
     "debug_port": 9291,
-    "orders_url": "<address of the BigW seller portal page that lists pending orders>",
-    "steps": [],
+    "orders_url": "https://portal.woolworthsmarketplus.com.au/dashboard",
+    "steps": [
+      {"click": "button:has-text('Export Pending Orders')"},
+      {"wait_ms": 3000},
+      {"goto": "https://portal.woolworthsmarketplus.com.au/inventory/export-request-dashboard"},
+      {"wait_for": "tbody tr"}
+    ],
     "download_click": "",
-    "download_row_text": "Pending Orders"
+    "download_row_text": "Pending Orders",
+    "wait_first_row_text": "COMPLETED",
+    "refresh_click": "button:has-text('Refresh')"
   }
 }
