@@ -9,7 +9,7 @@ The profile lives in chrome-profiles/<name>. Sign in to the website only (not to
 import subprocess
 import sys
 
-from core.browser import Account, _chrome_exe
+from core.browser import Account, _chrome_exe, launch_args
 
 
 def main():
@@ -19,7 +19,7 @@ def main():
     acct = Account(name=name, vendor="", region="", chrome_profile=name)
     folder = acct.profile_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen([_chrome_exe(acct), f"--user-data-dir={folder}", "--no-first-run", "--no-default-browser-check"])
+    subprocess.Popen([_chrome_exe(acct), f"--user-data-dir={folder}", *launch_args(acct)])
     print(f"Opened '{name}' ({folder}). Sign in to the website only, then close the window.")
 
 

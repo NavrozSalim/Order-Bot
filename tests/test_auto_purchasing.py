@@ -292,7 +292,8 @@ def test_portal_signed_out_asks_for_sign_in(tmp_path):
 def test_launch_args_and_profile_directory(tmp_path):
     import json
     from core.browser import Account, launch_args, load_accounts
-    assert launch_args(Account("a", "amazon_au", "au", "Amazon AU")) == ["--no-first-run", "--no-default-browser-check"]
+    assert launch_args(Account("a", "amazon_au", "au", "Amazon AU")) == [
+        "--no-first-run", "--no-default-browser-check", "--profile-directory=Default"]
     p = tmp_path / "acc.json"
     p.write_text(json.dumps({"au": {"amazon_au": [{"name": "Amazon AU", "chrome_profile": "Amazon AU",
                                                     "profile_directory": "Profile 4"}]}}))
@@ -352,3 +353,30 @@ def test_config_files_saved_by_windows_powershell_load(tmp_path):
     assert load_accounts(tmp_path / "acc.json")[0].chrome_profile == "Default"
     (tmp_path / "agent.json").write_bytes(bom + json.dumps({"server": "https://app", "token": "t"}).encode())
     assert load_config(tmp_path / "agent.json")["server"] == "https://app"
+
+
+def test_copy_profile_keeps_name_and_points_only_at_itself(tmp_path):
+    import json
+    from copy_profiles import copy_profile, profile_names
+    src = tmp_path / "User Data"
+    for name in ("Default", "Profile 1", "Profile 4", "Profile 10"):
+        (src / name / "Network").mkdir(parents=True)
+        (src / name / "Network" / "Cookies").write_bytes(name.encode())
+        (src / name / "Cache").mkdir()
+        (src / name / "Cache" / "big").write_bytes(b"x")
+    (src / "Local State").write_bytes(b"\xef\xbb\xbf" + json.dumps({
+        "os_crypt": {"encrypted_key": "k"},
+        "profile": {"last_used": "Profile 1", "profiles_order": ["Profile 1", "Profile 4"],
+                    "info_cache": {"Profile 1": {"name": "Costway AU"}, "Profile 4": {"name": "Kogan Seller"}}},
+    }).encode())
+    assert profile_names(src) == ["Default", "Profile 1", "Profile 4", "Profile 10"]
+
+    folder, label = copy_profile("Profile 4", src, tmp_path / "bot")
+    assert label == "Kogan Seller"
+    assert (folder / "Default" / "Network" / "Cookies").read_bytes() == b"Profile 4"
+    assert not (folder / "Default" / "Cache").exists()
+    state = json.loads((folder / "Local State").read_text(encoding="utf-8"))
+    assert state["os_crypt"] == {"encrypted_key": "k"}
+    assert state["profile"]["last_used"] == "Default"
+    assert state["profile"]["info_cache"] == {"Default": {"name": "Kogan Seller"}}
+    assert "profiles_order" not in state["profile"]

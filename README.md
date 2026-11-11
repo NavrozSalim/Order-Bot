@@ -26,7 +26,9 @@ copy portals.example.json portals.json        # local only, git-ignored
    the vendor site, tick "remember me", and close the window. The bot starts Chrome on that folder itself (or
    attaches when a Chrome is already open on the account's `debug_port`). It never logs in, never types a card
    number, and does not solve captchas or 2FA. Keep the window visible while the bot runs.
-   Your normal Chrome profiles cannot be used: Chrome blocks automation on its default profile folder.
+   Your normal Chrome profiles cannot be used directly: Chrome blocks automation on its default profile folder.
+   To reuse their logins, close Chrome and run `python copy_profiles.py`: it copies `Default`, `Profile 1` ...
+   into `chrome-profiles/<same name>`, so `"chrome_profile": "Profile 4"` works. The copy is a snapshot.
 3. Costco AU needs an active member login. Vevor may use guest checkout.
 
 ## Commands

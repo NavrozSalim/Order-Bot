@@ -88,10 +88,9 @@ def _port_up(port):
 
 def launch_args(account):
     """Chrome flags for a session the bot starts itself."""
-    args = ["--no-first-run", "--no-default-browser-check"]
-    if account.profile_directory:
-        args.append(f"--profile-directory={account.profile_directory}")
-    return args
+    # Always name the profile: a copied "Local State" may point Chrome at another (empty) profile.
+    return ["--no-first-run", "--no-default-browser-check",
+            f"--profile-directory={account.profile_directory or 'Default'}"]
 
 
 class BrowserSession:
