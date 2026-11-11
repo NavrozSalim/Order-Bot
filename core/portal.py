@@ -132,11 +132,21 @@ def _download_selector(page, cfg):
     row_text = str(cfg.get("download_row_text") or "").strip()
     if row_text:
         # Export-request dashboards list one row per export: download the newest row with this text.
-        sel = f"tr:has-text('{row_text}') >> a:has-text('Download'), tr:has-text('{row_text}') >> button:has-text('Download')"
-        if page.locator(sel).count() > 0:
-            return sel
-        raise PortalError(f"No Download link found in a row containing '{row_text}'. Request the export in the "
-                          "portal first, or check 'download_row_text' in portals.json.")
+        sel = f"tr:has-text('{row_text}') >> text=/download/i"
+        tries = int(cfg.get("download_find_tries", 3))
+        for i in range(tries):
+            if page.locator(sel).count() > 0:
+                return sel
+            if i < tries - 1:
+                page.wait_for_timeout(int(cfg.get("download_find_wait_ms", 10000)))
+                refresh = str(cfg.get("refresh_click") or "").strip()
+                if refresh:
+                    try:
+                        page.locator(refresh).first.click(timeout=3000)
+                    except Exception:
+                        pass
+        raise PortalError(f"No Download link found in a row containing '{row_text}' after {tries} tries. "
+                          "Check 'download_row_text' in portals.json.")
     for sel in DEFAULT_DOWNLOAD_CLICKS:
         try:
             if page.locator(sel).count() > 0:
