@@ -25,7 +25,7 @@ JS = """() => [...document.querySelectorAll('button, a, [role=button], [role=tab
 def account_for(arg):
     portals_file = ROOT / "portals.json"
     if portals_file.exists():
-        portals = json.loads(portals_file.read_text(encoding="utf-8"))
+        portals = json.loads(portals_file.read_text(encoding="utf-8-sig"))
         if arg in portals:
             return portal_account(arg, portals[arg])
     return Account(name=arg, vendor="portal", region="", chrome_profile=arg, debug_port=9299)

@@ -44,7 +44,7 @@ def load_portals(path=ROOT / "portals.json"):
         raise PortalError(f"{path.name} not found on this laptop. Copy portals.example.json to portals.json "
                           "and set the seller portal steps.")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except ValueError as e:
         raise PortalError(f"{path.name} is not valid JSON: {e}") from None
 

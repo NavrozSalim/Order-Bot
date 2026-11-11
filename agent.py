@@ -24,7 +24,7 @@ KINDS = "run,fetch_orders,purchase"
 def load_config(path=ROOT / "agent.json"):
     cfg = {"server": "", "token": "", "poll_seconds": 15, "progress_seconds": 20, "python": sys.executable}
     if Path(path).exists():
-        cfg.update(json.loads(Path(path).read_text(encoding="utf-8")))
+        cfg.update(json.loads(Path(path).read_text(encoding="utf-8-sig")))
     cfg["server"] = (os.environ.get("ORDERBOT_SERVER") or cfg["server"]).rstrip("/")
     cfg["token"] = os.environ.get("ORDERBOT_TOKEN") or cfg["token"]
     if not cfg["server"] or not cfg["token"]:

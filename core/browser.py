@@ -37,7 +37,7 @@ def load_accounts(path):
     path = Path(path)
     if not path.exists():
         raise AccountError(f"{path.name} not found. Copy accounts.example.json to accounts.json and fill it in.")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     accounts, seen, i = [], set(), 0
     for region, vendors in data.items():
         for vendor, items in vendors.items():

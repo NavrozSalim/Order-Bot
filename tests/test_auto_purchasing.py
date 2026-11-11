@@ -337,3 +337,18 @@ def test_portal_without_any_download_button_says_so(tmp_path):
     cfg = {"chrome_profile": "Kogan Seller", "orders_url": "https://seller/orders", "download_click": ""}
     with pytest.raises(PortalError, match="No Export or Download button"):
         fetch_orders_file("kogan", cfg, tmp_path, session_factory=lambda a: PortalSession(PortalPage()))
+
+
+def test_config_files_saved_by_windows_powershell_load(tmp_path):
+    """PowerShell 5 Set-Content -Encoding UTF8 writes a byte-order mark; the bot must still read the file."""
+    import json
+    from agent import load_config
+    from core.browser import load_accounts
+    from core.portal import load_portals
+    bom = b"\xef\xbb\xbf"
+    (tmp_path / "portals.json").write_bytes(bom + json.dumps({"kogan": {"chrome_profile": "Profile 4"}}).encode())
+    assert load_portals(tmp_path / "portals.json")["kogan"]["chrome_profile"] == "Profile 4"
+    (tmp_path / "acc.json").write_bytes(bom + json.dumps({"au": {"amazon_au": [{"name": "A", "chrome_profile": "Default"}]}}).encode())
+    assert load_accounts(tmp_path / "acc.json")[0].chrome_profile == "Default"
+    (tmp_path / "agent.json").write_bytes(bom + json.dumps({"server": "https://app", "token": "t"}).encode())
+    assert load_config(tmp_path / "agent.json")["server"] == "https://app"
