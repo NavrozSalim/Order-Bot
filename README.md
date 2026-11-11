@@ -12,17 +12,21 @@ order, and (only with `--place`) places the order on a purchase account you alre
 ## One-time setup
 
 ```
-pip install -r requirements.txt
+pip install -U -r requirements.txt            # keeps Playwright new enough for the installed Chrome
 copy accounts.example.json accounts.json      # local only, git-ignored; no passwords or card numbers
+copy portals.example.json portals.json        # local only, git-ignored
 ```
 
 1. Edit `accounts.json`: one entry per purchase account (`name`, `chrome_profile`, `email`). The account name selects
    the vendor. Optional per-account keys: `user_data_dir`, `debug_port` (default 9222 + position in the file),
    `chrome_path`.
-2. **Log into each Chrome profile once.** Start the bot (or Chrome with `--remote-debugging-port=<port>
-   --user-data-dir=<profile folder>`), log in to the vendor, and **save the card on the vendor site**. The bot never
-   logs in, never types a card number, and does not solve captchas or 2FA. The default profile folder is
-   `chrome-profiles/<chrome_profile>`. Keep the window visible while the bot runs.
+2. **Sign in to each bot profile once.** Every account and seller portal has its own folder
+   `chrome-profiles/<chrome_profile>` (separate from your normal Chrome). Open it with
+   `python open_profile.py "Amazon AU"`, sign in to the **website only** (not to Chrome / Google), save the card on
+   the vendor site, tick "remember me", and close the window. The bot starts Chrome on that folder itself (or
+   attaches when a Chrome is already open on the account's `debug_port`). It never logs in, never types a card
+   number, and does not solve captchas or 2FA. Keep the window visible while the bot runs.
+   Your normal Chrome profiles cannot be used: Chrome blocks automation on its default profile folder.
 3. Costco AU needs an active member login. Vevor may use guest checkout.
 
 ## Commands
@@ -120,9 +124,11 @@ Seller portal setup (once per laptop):
 copy portals.example.json portals.json      # local only, git-ignored
 ```
 
-For each marketplace set `chrome_profile` (or `user_data_dir`), `orders_url` (the page with the open orders), any
-`steps` needed before the download, and `download_click` (the button that downloads the file). Then start Chrome on
-that profile and **sign in to the seller portal once**. The agent never types a password: when the portal shows a
+For each marketplace set `orders_url` (the page with the open orders). `chrome_profile` is already `Kogan Seller` /
+`BigW Seller`. Leave `download_click` blank to let the bot click the first Export / Download button, or set it when
+the page has several. Add `steps` only when a click is needed before the download. Sign in once with
+`python open_profile.py "Kogan Seller"`. To see the page address and button names, run
+`python inspect_portal.py kogan` (or `bigw`), go to the orders page, and press Enter. The agent never types a password: when the portal shows a
 login page the Fetch stops with "Sign-in needed". Steps: `{"click": sel}`, `{"goto": url}`, `{"wait_for": sel}`,
 `{"wait_ms": n}`, `{"fill": sel, "value": text}`.
 

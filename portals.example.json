@@ -2,17 +2,15 @@
   "kogan": {
     "chrome_profile": "Kogan Seller",
     "debug_port": 9290,
-    "orders_url": "<Kogan seller portal page that lists open orders>",
+    "orders_url": "<address of the Kogan seller portal page that lists open orders>",
     "steps": [],
-    "download_click": "<selector of the button that downloads the open orders .xlsx>",
-    "login_url_parts": ["/login", "/signin"]
+    "download_click": ""
   },
   "bigw": {
     "chrome_profile": "BigW Seller",
     "debug_port": 9291,
-    "orders_url": "<BigW / MyDeal seller portal page that lists pending orders>",
+    "orders_url": "<address of the BigW seller portal page that lists pending orders>",
     "steps": [],
-    "download_click": "<selector of the button that downloads the pending orders .csv>",
-    "login_url_parts": ["/login", "/signin"]
+    "download_click": ""
   }
 }

@@ -11,7 +11,7 @@ Each marketplace is configured in portals.json (copy portals.example.json):
       "chrome_profile": "Kogan Seller",          # or "user_data_dir"; optional "debug_port", "chrome_path"
       "orders_url": "https://<portal>/orders",   # page the steps start on
       "steps": [{"click": "text=Open Orders"}, {"wait_ms": 1500}],   # optional, before the download
-      "download_click": "button:has-text('Export')",                 # click that starts the download
+      "download_click": "button:has-text('Export')",                 # optional; blank = try Export/Download buttons
       "login_url_parts": ["/login", "/signin"]                       # optional
     },
     "bigw": { ... }
@@ -26,6 +26,11 @@ from pathlib import Path
 from .browser import ROOT, Account, BrowserSession
 
 LOGIN_URL_PARTS = ["/login", "/signin", "/sign-in", "/auth", "/account/login"]
+# Tried in order when portals.json has no download_click: the first visible one starts the download.
+DEFAULT_DOWNLOAD_CLICKS = [
+    "button:has-text('Export')", "a:has-text('Export')", "button:has-text('Download')", "a:has-text('Download')",
+    "[role=button]:has-text('Export')", "[role=button]:has-text('Download')", "text=/export|download/i",
+]
 PLACEHOLDER = "<"
 
 
@@ -49,10 +54,11 @@ def portal_config(portals, marketplace):
     label = marketplace.capitalize() if marketplace != "bigw" else "BigW"
     if not isinstance(cfg, dict):
         raise PortalError(f"The {label} seller portal is not set up in portals.json on this laptop.")
-    for key in ("orders_url", "download_click"):
-        value = str(cfg.get(key) or "")
-        if not value or value.startswith(PLACEHOLDER):
-            raise PortalError(f"Set '{key}' for {label} in portals.json on this laptop.")
+    url = str(cfg.get("orders_url") or "")
+    if not url or url.startswith(PLACEHOLDER):
+        raise PortalError(f"Set 'orders_url' for {label} in portals.json on this laptop.")
+    if str(cfg.get("download_click") or "").startswith(PLACEHOLDER):
+        cfg = {**cfg, "download_click": ""}
     if not (cfg.get("chrome_profile") or cfg.get("user_data_dir")):
         raise PortalError(f"Set 'chrome_profile' (the signed-in Chrome profile) for {label} in portals.json.")
     return cfg
@@ -63,7 +69,7 @@ def portal_account(marketplace, cfg):
     return Account(
         name=f"{marketplace}-portal", vendor="portal", region="", chrome_profile=cfg.get("chrome_profile", ""),
         user_data_dir=cfg.get("user_data_dir", ""), debug_port=int(cfg.get("debug_port") or 9290),
-        chrome_path=cfg.get("chrome_path", ""),
+        chrome_path=cfg.get("chrome_path", ""), profile_directory=cfg.get("profile_directory", ""),
     )
 
 
@@ -93,6 +99,21 @@ def _run_step(page, step):
         raise PortalError(f"Unknown portal step: {step}")
 
 
+def _download_selector(page, cfg):
+    """The configured download_click, or the first common Export / Download control on the page."""
+    configured = str(cfg.get("download_click") or "").strip()
+    if configured:
+        return configured
+    for sel in DEFAULT_DOWNLOAD_CLICKS:
+        try:
+            if page.locator(sel).count() > 0:
+                return sel
+        except Exception:
+            continue
+    raise PortalError("No Export or Download button found on the orders page. Set 'download_click' in portals.json "
+                      "(run inspect_portal.py to see the buttons).")
+
+
 def fetch_orders_file(marketplace, cfg, dest_dir, *, session_factory=BrowserSession):
     """Open the portal, run the steps, click download. Returns the saved file path."""
     dest_dir = Path(dest_dir)
@@ -114,9 +135,10 @@ def fetch_orders_file(marketplace, cfg, dest_dir, *, session_factory=BrowserSess
                     raise
                 except Exception as e:
                     raise PortalError(f"{label} portal step {step} failed: {type(e).__name__}: {e}"[:400]) from None
+            selector = _download_selector(page, cfg)
             try:
                 with page.expect_download(timeout=int(cfg.get("download_timeout_ms", 120000))) as info:
-                    page.locator(cfg["download_click"]).first.click()
+                    page.locator(selector).first.click()
                 download = info.value
             except Exception as e:
                 raise PortalError(f"{label} orders download did not start: {type(e).__name__}: {e}"[:400]) from None

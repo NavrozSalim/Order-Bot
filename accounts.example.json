@@ -1,13 +1,13 @@
 {
   "us": {
-    "amazon": [{ "name": "company-a-amazon", "chrome_profile": "Profile 1", "email": "" }],
-    "ebay": [{ "name": "company-a-ebay", "chrome_profile": "Profile 2", "email": "" }]
+    "amazon": [{ "name": "Amazon US", "chrome_profile": "Amazon US", "email": "", "debug_port": 9230 }],
+    "ebay": [{ "name": "Ebay US", "chrome_profile": "Ebay US", "email": "", "debug_port": 9231 }]
   },
   "au": {
-    "amazon_au": [{ "name": "company-a-amazon-au", "chrome_profile": "Profile 3", "email": "" }],
-    "ebay_au": [],
-    "costco_au": [],
-    "costway_au": [],
+    "amazon_au": [{ "name": "Amazon AU", "chrome_profile": "Amazon AU", "email": "", "debug_port": 9232 }],
+    "ebay_au": [{ "name": "eBay AU", "chrome_profile": "eBay AU", "email": "", "debug_port": 9233 }],
+    "costco_au": [{ "name": "Costco AU", "chrome_profile": "Costco AU", "email": "", "debug_port": 9234 }],
+    "costway_au": [{ "name": "Costway AU", "chrome_profile": "Costway AU", "email": "", "debug_port": 9235 }],
     "vevor_au": []
   }
 }

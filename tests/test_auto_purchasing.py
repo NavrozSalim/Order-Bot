@@ -285,3 +285,55 @@ def test_portal_download_runs_steps_and_saves_file(tmp_path):
 def test_portal_signed_out_asks_for_sign_in(tmp_path):
     with pytest.raises(PortalError, match="Sign-in needed"):
         fetch_orders_file("kogan", PORTAL_CFG, tmp_path, session_factory=lambda a: PortalSession(PortalPage(login=True)))
+
+
+# ---------------------------------------------------------------- Chrome session and portal defaults
+
+def test_launch_args_and_profile_directory(tmp_path):
+    import json
+    from core.browser import Account, launch_args, load_accounts
+    assert launch_args(Account("a", "amazon_au", "au", "Amazon AU")) == ["--no-first-run", "--no-default-browser-check"]
+    p = tmp_path / "acc.json"
+    p.write_text(json.dumps({"au": {"amazon_au": [{"name": "Amazon AU", "chrome_profile": "Amazon AU",
+                                                    "profile_directory": "Profile 4"}]}}))
+    acct = load_accounts(p)[0]
+    assert acct.profile_directory == "Profile 4"
+    assert launch_args(acct)[-1] == "--profile-directory=Profile 4"
+
+
+def test_example_configs_use_bot_profile_names():
+    import json
+    root = Path(__file__).resolve().parent.parent
+    portals = json.loads((root / "portals.example.json").read_text(encoding="utf-8"))
+    assert {k: v["chrome_profile"] for k, v in portals.items()} == {"kogan": "Kogan Seller", "bigw": "BigW Seller"}
+    accounts = json.loads((root / "accounts.example.json").read_text(encoding="utf-8"))
+    names = [a["chrome_profile"] for region in accounts.values() for items in region.values() for a in items]
+    assert sorted(names) == sorted(["Amazon US", "Ebay US", "Amazon AU", "eBay AU", "Costco AU", "Costway AU"])
+
+
+def test_portal_config_only_needs_orders_url():
+    cfg = portal_config({"kogan": {"chrome_profile": "Kogan Seller", "orders_url": "https://p/o",
+                                   "download_click": "<set me>"}}, "kogan")
+    assert cfg["download_click"] == ""
+
+
+class AutoButtonPage(PortalPage):
+    def locator(self, sel):
+        loc = super().locator(sel)
+        if sel == "a:has-text('Export')":
+            loc.count = lambda: 1
+        return loc
+
+
+def test_portal_finds_export_button_by_itself(tmp_path):
+    page = AutoButtonPage()
+    cfg = {"chrome_profile": "Kogan Seller", "orders_url": "https://seller/orders", "download_click": ""}
+    path = fetch_orders_file("kogan", cfg, tmp_path, session_factory=lambda a: PortalSession(page))
+    assert path.name == "OpenOrders.xlsx"
+    assert page.clicked == ["a:has-text('Export')"]
+
+
+def test_portal_without_any_download_button_says_so(tmp_path):
+    cfg = {"chrome_profile": "Kogan Seller", "orders_url": "https://seller/orders", "download_click": ""}
+    with pytest.raises(PortalError, match="No Export or Download button"):
+        fetch_orders_file("kogan", cfg, tmp_path, session_factory=lambda a: PortalSession(PortalPage()))

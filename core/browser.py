@@ -1,13 +1,12 @@
-"""Purchase accounts and the attach-to-Chrome session.
+"""Purchase accounts and the Chrome session.
 
-The bot never logs in, never types a card number and has no stealth or proxy code. It attaches over the
-DevTools port to an ordinary Chrome that the operator already logged in with --user-data-dir.
+The bot never logs in, never types a card number and has no stealth or proxy code. Each account (and each
+seller portal) has its own Chrome profile folder that the operator signed in to once. The session starts
+Chrome on that folder; when a Chrome is already open on the account's debug port it attaches to it instead.
 """
 import json
 import os
 import shutil
-import subprocess
-import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +27,7 @@ class Account:
     user_data_dir: str = ""
     debug_port: int = BASE_PORT
     chrome_path: str = ""
+    profile_directory: str = ""   # optional sub-profile inside user_data_dir, e.g. "Profile 4"
 
     def profile_dir(self):
         return Path(self.user_data_dir) if self.user_data_dir else ROOT / "chrome-profiles" / self.chrome_profile
@@ -49,7 +49,8 @@ def load_accounts(path):
                 accounts.append(Account(
                     name=name, vendor=vendor, region=region, chrome_profile=it.get("chrome_profile", ""),
                     email=it.get("email", ""), user_data_dir=it.get("user_data_dir", ""),
-                    debug_port=int(it.get("debug_port", BASE_PORT + i)), chrome_path=it.get("chrome_path", "")))
+                    debug_port=int(it.get("debug_port", BASE_PORT + i)), chrome_path=it.get("chrome_path", ""),
+                    profile_directory=it.get("profile_directory", "")))
                 i += 1
     return accounts
 
@@ -85,39 +86,69 @@ def _port_up(port):
         return False
 
 
+def launch_args(account):
+    """Chrome flags for a session the bot starts itself."""
+    args = ["--no-first-run", "--no-default-browser-check"]
+    if account.profile_directory:
+        args.append(f"--profile-directory={account.profile_directory}")
+    return args
+
+
 class BrowserSession:
-    """Context manager. Closes only the Playwright connection; the operator's Chrome window stays open."""
+    """Context manager around one Chrome profile.
+
+    * A Chrome already open on the account's debug port is attached to and left open afterwards.
+    * Otherwise the bot starts Chrome on the profile folder itself (Playwright persistent profile) and closes
+      it at the end. This avoids attaching over the DevTools port, which newer Chrome versions reject for
+      some Playwright versions ("Browser context management is not supported").
+    """
 
     def __init__(self, account):
         self.account = account
         self._pw = None
+        self._owns = False
         self.context = None
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
         a = self.account
-        if not _port_up(a.debug_port):
+        self._pw = sync_playwright().start()
+        try:
+            if _port_up(a.debug_port):
+                try:
+                    browser = self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{a.debug_port}")
+                except Exception as e:
+                    raise BrowserStartError(
+                        f"a Chrome is open on port {a.debug_port} but could not be attached ({type(e).__name__}). "
+                        f"Close that Chrome window and run again; the bot then starts Chrome itself.") from None
+                self.context = browser.contexts[0]
+                return self
             pdir = a.profile_dir()
             pdir.mkdir(parents=True, exist_ok=True)
-            subprocess.Popen([_chrome_exe(a), f"--remote-debugging-port={a.debug_port}",
-                              f"--user-data-dir={pdir}", "--no-first-run", "--no-default-browser-check"])
-            for _ in range(30):
-                if _port_up(a.debug_port):
-                    break
-                time.sleep(1)
-            else:
-                raise BrowserStartError(f"Chrome did not open debug port {a.debug_port}")
-        try:
-            self._pw = sync_playwright().start()
-            browser = self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{a.debug_port}")
-        except Exception as e:
-            raise BrowserStartError(f"could not attach to Chrome on port {a.debug_port}: {e}") from None
-        self.context = browser.contexts[0]
-        return self
+            try:
+                self.context = self._pw.chromium.launch_persistent_context(
+                    str(pdir), executable_path=_chrome_exe(a), headless=False, no_viewport=True,
+                    accept_downloads=True, args=launch_args(a), ignore_default_args=["--enable-automation"])
+            except BrowserStartError:
+                raise
+            except Exception as e:
+                raise BrowserStartError(
+                    f"could not start Chrome on profile {pdir} ({type(e).__name__}: {str(e)[:200]}). "
+                    f"Close any Chrome window using this profile and try again.") from None
+            self._owns = True
+            return self
+        except BaseException:
+            self._pw.stop()
+            self._pw = None
+            raise
 
     def __exit__(self, *exc):
-        if self._pw:
-            self._pw.stop()
+        try:
+            if self._owns and self.context is not None:
+                self.context.close()
+        finally:
+            if self._pw:
+                self._pw.stop()
 
     def new_page(self):
         page = self.context.new_page()
