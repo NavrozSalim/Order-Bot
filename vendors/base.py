@@ -158,7 +158,7 @@ class Vendor:
                 raise ChallengeError(f"{kind} challenge on page; not attempted")
         if not self.allow_guest:
             try:
-                pw = page.locator("input[type=password]").count()
+                pw = page.locator("input[type=password]:visible").count()  # hidden sign-in popups do not count
             except Exception:
                 pw = 0
             if pw or any(u in url for u in LOGIN_URL_PARTS):
