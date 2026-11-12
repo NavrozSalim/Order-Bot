@@ -129,7 +129,7 @@ class CostwayAU(Vendor):
         settle(page, 4000)
         self.guard(page)
         if first_visible(page, self.place_selectors, 10000) is None:
-            raise VendorError("payment step with place-order button not reached")
+            raise VendorError("payment step with place-order button not reached; " + _where(page))
 
     def submit_order(self, page):
         click_required(page, self.place_selectors, "Place Order")
@@ -138,3 +138,33 @@ class CostwayAU(Vendor):
     def read_order_number(self, page):
         m = self.order_re.search(body_text(page))
         return m.group(1) if m else None
+
+
+_WHERE_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const btns = [...document.querySelectorAll('button, a.action, input[type=submit]')].filter(vis)
+    .map(b => (b.innerText || b.value || '').trim().replace(/\s+/g, ' ')).filter(t => t && t.length < 40);
+  const empty = [...document.querySelectorAll('input, select')].filter(e => vis(e) && e.required && !e.value)
+    .map(e => e.name || e.id);
+  const errs = [...document.querySelectorAll('.mage-error, .message-error, [role=alert]')].filter(vis)
+    .map(e => e.innerText.trim().slice(0, 80)).filter(Boolean);
+  return {btns: [...new Set(btns)].slice(0, 12), empty: empty.slice(0, 8), errs: errs.slice(0, 4)};
+}"""
+
+
+def _where(page):
+    """Short description of the page for the error message: address, buttons, empty required fields."""
+    try:
+        info = page.evaluate(_WHERE_JS) or {}
+    except Exception:
+        info = {}
+    url = (getattr(page, "url", "") or "").split("?")[0]
+    parts = [f"page {url}"]
+    if info.get("errs"):
+        parts.append("errors: " + " / ".join(info["errs"]))
+    if info.get("empty"):
+        parts.append("empty fields: " + ", ".join(info["empty"]))
+    if info.get("btns"):
+        parts.append("buttons: " + ", ".join(info["btns"]))
+    return "; ".join(parts)[:600]
