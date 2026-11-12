@@ -87,3 +87,16 @@ def test_no_colours_uses_schema_availability():
 def test_sku_missing_from_page_fails():
     with pytest.raises(VendorError):
         vendor().check_sku(Page(), "ZZ999")
+
+
+def test_bot_profile_keeps_session_cookies(tmp_path):
+    import json
+    from core.browser import keep_session_cookies
+
+    acct = Account("c", "costway_au", "au", "Profile 1", user_data_dir=str(tmp_path))
+    prefs = tmp_path / "Default" / "Preferences"
+    prefs.parent.mkdir()
+    prefs.write_text(json.dumps({"profile": {"name": "x"}, "session": {"restore_on_startup": 5}}))
+    keep_session_cookies(acct)
+    data = json.loads(prefs.read_text())
+    assert data["session"]["restore_on_startup"] == 1 and data["profile"]["name"] == "x"

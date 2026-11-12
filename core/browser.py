@@ -86,6 +86,25 @@ def _port_up(port):
         return False
 
 
+def keep_session_cookies(account):
+    """Make the bot's profile "Continue where you left off" so Chrome keeps session cookies.
+
+    Some shops (Costway) sign in with a cookie that has no expiry date; Chrome drops it when the window
+    closes unless the profile restores the last session. Only touches the bot's own profile folders.
+    """
+    prefs = account.profile_dir() / (account.profile_directory or "Default") / "Preferences"
+    try:
+        data = json.loads(prefs.read_text(encoding="utf-8-sig")) if prefs.exists() else {}
+    except Exception:
+        return  # unreadable Preferences: leave Chrome's file alone
+    session = data.setdefault("session", {})
+    if session.get("restore_on_startup") == 1:
+        return
+    session["restore_on_startup"] = 1
+    prefs.parent.mkdir(parents=True, exist_ok=True)
+    prefs.write_text(json.dumps(data), encoding="utf-8")
+
+
 def launch_args(account):
     """Chrome flags for a session the bot starts itself."""
     # Always name the profile: a copied "Local State" may point Chrome at another (empty) profile.
@@ -124,6 +143,7 @@ class BrowserSession:
                 return self
             pdir = a.profile_dir()
             pdir.mkdir(parents=True, exist_ok=True)
+            keep_session_cookies(a)
             try:
                 self.context = self._pw.chromium.launch_persistent_context(
                     str(pdir), executable_path=_chrome_exe(a), headless=False, no_viewport=True,

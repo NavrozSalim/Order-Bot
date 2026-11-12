@@ -16,7 +16,7 @@ import re
 
 from core.address import split_name
 from core.stock import IN_STOCK_NO_NUMBER
-from .base import (Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
+from .base import (ChallengeError, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
                    first_visible, settle)
 
 
@@ -92,6 +92,9 @@ class CostwayAU(Vendor):
         self.guard(page)
         click_required(page, ["button.checkout", "button:has-text('Proceed to Checkout')"], "Proceed to Checkout")
         settle(page, 4000)
+        if first_visible(page, ["button.guest-button", "button:has-text('Continue as Guest')"], 1500) is not None:
+            raise ChallengeError("Costway is not signed in in this Chrome profile; on the laptop run "
+                                 f"python open_profile.py \"{self.account.chrome_profile}\" and sign in to Costway")
         self.guard(page)
         # Signed in with saved addresses: open the new-address form for the customer's address.
         click_optional(page, ["button.action-show-popup", "button:has-text('New Address')"], 5000)
