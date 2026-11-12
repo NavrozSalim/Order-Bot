@@ -1,7 +1,7 @@
 """Vevor AU. Guest checkout is fine. No card numbers are typed; the method already offered is used."""
 import re
 
-from .base import (Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
+from .base import (goto, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
                    first_visible, settle)
 
 
@@ -21,7 +21,7 @@ class VevorAU(Vendor):
     order_re = re.compile(r"order\s*(?:number|#|no\.?)\s*:?\s*([A-Z0-9-]{6,})", re.I)
 
     def fill_shipping(self, page, line):
-        page.goto(self.cart_url, wait_until="domcontentloaded")
+        goto(page, self.cart_url)
         settle(page)
         self.guard(page)
         click_required(page, ["button:has-text('Check Out')", "a:has-text('Check Out')", "button:has-text('Checkout')"],

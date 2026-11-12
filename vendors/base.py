@@ -39,6 +39,23 @@ def settle(page, ms=800):
         pass
 
 
+NAV_TIMEOUT_MS = 60000
+
+
+def goto(page, url):
+    """Open a page; slow shops (Costway) get 60 s and one retry that only waits for the first response."""
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+    except Exception as first:
+        if "timeout" not in str(first).lower():
+            raise
+        try:
+            page.goto(url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
+        except Exception:
+            raise VendorError(f"page did not load in {NAV_TIMEOUT_MS // 1000}s: {url}") from None
+        settle(page, 4000)
+
+
 def body_text(page):
     try:
         return page.inner_text("body")
@@ -218,7 +235,7 @@ class Vendor:
                 raise ChallengeError("login wall; profile is not logged in")
 
     def open_product(self, page, url):
-        page.goto(url, wait_until="domcontentloaded")
+        goto(page, url)
         settle(page)
         self.guard(page)
 
@@ -270,16 +287,34 @@ class Vendor:
         if self.verify_sku_on_page and vendor_sku and vendor_sku.casefold() not in body_text(page).casefold():
             raise VendorError(f"vendor SKU {vendor_sku!r} not found on product page")
 
+    cart_confirm = ["button.action-accept", ".modal-footer button:has-text('OK')", "button:has-text('Confirm')",
+                    "button:has-text('Yes')"]
+
     def clear_cart(self, page):
-        """Empty the purchase account's cart so earlier dry-run items are not bought with this line."""
+        """Empty the purchase account's cart first, so only this order's product is bought.
+
+        Stops the line when items are still in the cart afterwards.
+        """
         if not self.cart_url:
             return
-        page.goto(self.cart_url, wait_until="domcontentloaded")
-        settle(page)
-        self.guard(page)
-        for _ in range(25):
-            if not click_optional(page, self.cart_remove, 1200):
-                break
+        try:
+            page.on("dialog", lambda d: d.accept())  # "Remove this item?" browser confirm
+        except Exception:
+            pass
+        for _ in range(3):
+            goto(page, self.cart_url)
+            settle(page)
+            self.guard(page)
+            for _ in range(25):
+                if not click_optional(page, self.cart_remove, 1200):
+                    break
+                click_optional(page, self.cart_confirm, 1200)
+                settle(page, 1500)
+            goto(page, self.cart_url)  # reload: removals made with ajax may still show
+            settle(page, 1500)
+            if first_visible(page, self.cart_remove, 2000) is None:
+                return
+        raise VendorError("the cart could not be emptied; nothing was added or bought")
 
     def set_quantity(self, page, qty):
         loc = first_visible(page, self.qty_selectors)

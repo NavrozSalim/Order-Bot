@@ -172,3 +172,17 @@ def test_costway_email_optional_when_profile_has_it():
     v.email = "set@example.com"
     v.fill_email(empty, ["#email"])
     assert empty.values["email"] == "set@example.com"
+
+
+class StuckCartVendor(FakeVendor):
+    cart_url = "https://www.amazon.com.au/cart"
+    cart_remove = ["#remove"]
+
+
+def test_cart_that_will_not_empty_stops_the_line(tmp_path):
+    html = PRODUCT_HTML.replace("</body>", '<button id="remove">Delete</button></body>')
+    code, sess, out = run_au(tmp_path, [kogan_row("K1", "K-1", Quantity=1)], [("K-1", "amazon_au", AMZ, "")],
+                             html=html, vendor=StuckCartVendor)
+    row = sheet(out / "kogan-remaining.xlsx")[0]
+    assert row["status"] == "failed" and "could not be emptied" in row["error"]
+    assert "add" not in sess.pages[-1].clicks

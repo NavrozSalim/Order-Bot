@@ -2,7 +2,7 @@
 import re
 
 from core.address import split_name
-from .base import (Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
+from .base import (goto, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
                    first_visible, settle)
 
 
@@ -25,7 +25,7 @@ class Amazon(Vendor):
         return self.base + "/gp/cart/view.html"
 
     def fill_shipping(self, page, line):
-        page.goto(self.cart_url, wait_until="domcontentloaded")
+        goto(page, self.cart_url)
         settle(page)
         self.guard(page)
         click_required(page, ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",

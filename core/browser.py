@@ -172,6 +172,7 @@ class BrowserSession:
     def new_page(self):
         page = self.context.new_page()
         page.set_default_timeout(15000)
+        page.set_default_navigation_timeout(60000)  # some shops take longer than 15 s to load
         return page
 
     def screenshot(self, page, path):

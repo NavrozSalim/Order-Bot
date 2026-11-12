@@ -16,7 +16,7 @@ import re
 
 from core.address import split_name
 from core.stock import IN_STOCK_NO_NUMBER
-from .base import (ChallengeError, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
+from .base import (goto, ChallengeError, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
                    first_visible, settle)
 
 
@@ -89,9 +89,16 @@ class CostwayAU(Vendor):
             raise VendorError(f"vendor SKU {vendor_sku!r} not found on product page")
 
     def fill_shipping(self, page, line):
-        page.goto(self.cart_url, wait_until="domcontentloaded")
+        goto(page, self.cart_url)
         settle(page)
         self.guard(page)
+        # The cart was emptied before this product was added: it must hold exactly one line now.
+        try:
+            lines = page.locator("a.action-delete:visible").count()
+        except Exception:
+            lines = 1
+        if lines != 1:
+            raise VendorError(f"cart holds {lines} products instead of 1; not checked out")
         click_required(page, ["button.checkout", "button:has-text('Proceed to Checkout')"], "Proceed to Checkout")
         settle(page, 4000)
         if first_visible(page, ["button.guest-button", "button:has-text('Continue as Guest')"], 1500) is not None:

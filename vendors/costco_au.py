@@ -1,7 +1,7 @@
 """Costco AU. Member account must already be logged in. Address comes only from a matching suggestion."""
 import re
 
-from .base import (Vendor, VendorError, body_text, click_optional, click_required, fill_field, first_visible, settle)
+from .base import (goto, Vendor, VendorError, body_text, click_optional, click_required, fill_field, first_visible, settle)
 
 
 class CostcoAU(Vendor):
@@ -19,7 +19,7 @@ class CostcoAU(Vendor):
     order_re = re.compile(r"order\s*(?:number|#|no\.?)\s*:?\s*([A-Z0-9-]{6,})", re.I)
 
     def fill_shipping(self, page, line):
-        page.goto(self.cart_url, wait_until="domcontentloaded")
+        goto(page, self.cart_url)
         settle(page)
         self.guard(page)
         click_required(page, ["button:has-text('Checkout')", "a:has-text('Checkout')"], "Checkout")
