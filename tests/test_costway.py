@@ -211,3 +211,84 @@ def test_paypal_without_pay_button_pays_nothing(monkeypatch):
     with pytest.raises(VendorError, match="nothing was paid"):
         vendor().submit_order(page)
     assert "Pay" not in page.clicked
+
+
+class Card:
+    def __init__(self, page, i):
+        self.page, self.i = page, i
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1 if self.i is not None else 0
+
+    def inner_text(self):
+        return self.page.cards[self.i][0]
+
+    def locator(self, sel):
+        page, i = self.page, self.i
+
+        class Btn:
+            first = None
+
+            def count(self_inner):
+                return 1
+        b = Btn()
+        b.first = ("ship", i)
+        return b
+
+
+class Cards:
+    def __init__(self, page, selected_only):
+        self.page, self.sel = page, selected_only
+
+    @property
+    def first(self):
+        idx = [i for i, c in enumerate(self.page.cards) if c[1]]
+        return Card(self.page, idx[0] if idx else None)
+
+    def count(self):
+        return sum(1 for c in self.page.cards if c[1]) if self.sel else len(self.page.cards)
+
+    def nth(self, i):
+        return Card(self.page, i)
+
+
+class AddrPage:
+    def __init__(self, cards):
+        self.cards = cards  # [(text, selected)]
+
+    def locator(self, sel):
+        return Cards(self, "selected-item" in sel)
+
+    def wait_for_load_state(self, *a, **k):
+        pass
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+class Line:
+    postcode, address1 = "2000", "5 Gresham Street"
+
+
+def test_selected_customer_address_passes(monkeypatch):
+    page = AddrPage([("Me 1 Home Rd Sydney 2150", False), ("Emily 5 Gresham Street Sydney NSW 2000", True)])
+    vendor().check_selected_address(page, Line())
+
+
+def test_wrong_selected_address_switches_to_customer_card(monkeypatch):
+    import vendors.costway_au as cw
+    clicked = []
+    monkeypatch.setattr(cw, "click_loc", lambda p, loc, tries=3: clicked.append(loc))
+    page = AddrPage([("Me 1 Home Rd Sydney 2150", True), ("Emily 5 Gresham Street Sydney NSW 2000", False)])
+    vendor().check_selected_address(page, Line())
+    assert clicked == [("ship", 1)]
+
+
+def test_no_customer_address_stops(monkeypatch):
+    page = AddrPage([("Me 1 Home Rd Sydney 2150", True)])
+    with pytest.raises(VendorError, match="not the selected delivery address"):
+        vendor().check_selected_address(page, Line())

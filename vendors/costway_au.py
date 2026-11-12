@@ -126,16 +126,96 @@ class CostwayAU(Vendor):
         choose_state(page, ["select[name='region_id']", "input[name='region']"], line)
         fill_field(page, ["input[name='postcode']"], line.postcode, "postcode")
         fill_field(page, ["input[name='telephone']"], line.phone, "phone")
-        # Saved-address popup: "Ship here" / "Save Address" closes it with the new address chosen.
-        click_optional(page, ["button.action-save-address", "button:has-text('Ship here')",
-                              "button:has-text('Save Address')"], 2500)
-        settle(page, 2000)
-        click_optional(page, ["#checkout-shipping-method-load input[type=radio]:visible"], 2500)
-        click_optional(page, ["#shipping-method-buttons-container button.continue", "button.continue",
-                              "button:has-text('Next')", "button:has-text('Continue')"], 5000)
-        settle(page, 4000)
+        # New-address popup: its own "Ship here" saves the address and selects it. Only buttons inside the
+        # open popup: the saved-address cards also have "Ship Here" and must never be clicked blindly.
+        click_optional(page, NEW_ADDRESS_SAVE, 2500)
+        settle(page, 3000)
+        self.check_selected_address(page, line)
+        self.choose_shipping_method(page)
+        self.next_to_payment(page)
         self.guard(page)
         self.choose_paypal(page)
+
+    def check_selected_address(self, page, line):
+        """With saved addresses, the selected card must be the customer's (postcode and street).
+
+        When another card is selected, pick the customer's card; stop when there is none.
+        """
+        try:
+            cards = page.locator(".shipping-address-item")
+            n = cards.count()
+        except Exception:
+            return
+        if not n:
+            return  # no saved-address cards: the inline form holds the customer's address
+        want_pc = (line.postcode or "").strip()
+        want_st = " ".join((line.address1 or "").lower().split())[:12]
+
+        def is_customer(text):
+            t = " ".join((text or "").lower().split())
+            return want_pc in t and (not want_st or want_st in t)
+
+        try:
+            sel = page.locator(".shipping-address-item.selected-item")
+            if sel.count() and is_customer(sel.first.inner_text()):
+                return
+        except Exception:
+            pass
+        for i in range(n):
+            card = cards.nth(i)
+            try:
+                if not is_customer(card.inner_text()):
+                    continue
+                btn = card.locator("button.action-select-shipping-item, button:has-text('Ship Here')")
+                if btn.count():
+                    click_loc(page, btn.first)
+                    settle(page, 2000)
+                return
+            except Exception:
+                continue
+        raise VendorError(f"the customer's address ({want_pc}) is not the selected delivery address; "
+                          "not checked out")
+
+    def choose_shipping_method(self, page):
+        """Wait for the delivery options of the new address and pick one when none is picked."""
+        radios = ["#checkout-shipping-method-load input[type=radio]", "table.table-checkout-shipping-method input[type=radio]"]
+        for _ in range(15):
+            try:
+                if page.locator("#checkout-shipping-method-load input[type=radio]:checked, "
+                                "table.table-checkout-shipping-method input[type=radio]:checked").count():
+                    return
+            except Exception:
+                pass
+            loc = first_visible(page, radios, 1000)
+            if loc is not None:
+                try:
+                    click_loc(page, loc)
+                except Exception:
+                    pass
+                settle(page, 1000)
+                return
+            try:
+                page.wait_for_timeout(1000)
+            except Exception:
+                pass
+        # Some carts have a single free method with no radio: Next decides.
+
+    def next_to_payment(self, page):
+        """Click Next until the payment step opens (3 tries)."""
+        for _ in range(3):
+            if "#payment" in (page.url or ""):
+                return
+            click_optional(page, NEXT_TO_PAYMENT, 5000)
+            for _ in range(15):
+                if "#payment" in (page.url or ""):
+                    return
+                try:
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    break
+            self.choose_shipping_method(page)
+        if "#payment" not in (page.url or ""):
+            raise VendorError("'Next' did not open the payment step; " + _where(page))
 
     # ---- payment: PayPal (already linked to the signed-in Costway account) -------------------
     def choose_paypal(self, page):
@@ -191,6 +271,10 @@ class CostwayAU(Vendor):
         return m.group(1) if m else None
 
 
+NEW_ADDRESS_SAVE = [".modal-popup._show button.action-save-address", ".modal-popup._show button:has-text('Ship here')",
+                    ".modal-popup._show button:has-text('Save Address')"]
+NEXT_TO_PAYMENT = ["button[data-role='opc-continue-step']", "#shipping-method-buttons-container button.continue",
+                   "button.continue:has-text('Next')", "button:has-text('Next')"]
 PAYPAL_OPTION = ["input#paypal_express", "input[value='paypal_express']", "input[value*='paypal' i]",
                  "label[for*='paypal' i]", "label:has-text('PayPal')", "text=PayPal"]
 CONTINUE_TO_PAYPAL = ["button:has-text('Continue to PayPal')", "a:has-text('Continue to PayPal')",
@@ -224,7 +308,7 @@ _WHERE_JS = r"""() => {
     .map(b => (b.innerText || b.value || '').trim().replace(/\s+/g, ' ')).filter(t => t && t.length < 40);
   const empty = [...document.querySelectorAll('input, select')].filter(e => vis(e) && e.required && !e.value)
     .map(e => e.name || e.id);
-  const errs = [...document.querySelectorAll('.mage-error, .message-error, [role=alert]')].filter(vis)
+  const errs = [...document.querySelectorAll('.mage-error, .message-error, .message.error, .message.warning, .field-error, [role=alert]')].filter(vis)
     .map(e => e.innerText.trim().slice(0, 80)).filter(Boolean);
   return {btns: [...new Set(btns)].slice(0, 12), empty: empty.slice(0, 8), errs: errs.slice(0, 4)};
 }"""
