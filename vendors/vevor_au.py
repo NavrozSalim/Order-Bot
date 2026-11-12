@@ -9,7 +9,7 @@ class VevorAU(Vendor):
     name = "vevor_au"
     region = "au"
     allow_guest = True
-    require_email = True
+    require_email = False  # the signed-in Chrome profile carries the email
     verify_sku_on_page = True
     cart_url = "https://www.vevor.com.au/cart"
     cart_remove = ["button:has-text('Remove')", "a:has-text('Delete')", ".cart-item .delete"]
@@ -28,7 +28,7 @@ class VevorAU(Vendor):
                        "Check Out")
         self.guard(page)
         click_optional(page, ["button:has-text('Guest')", "a:has-text('Continue as guest')"], 2500)
-        fill_field(page, ["input[name='email']", "input[type=email]"], self.email, "email")
+        self.fill_email(page, ["input[name='email']", "input[type=email]"])
         fill_field(page, ["input[name='name']", "input[name='fullName']", "input[placeholder*='Name' i]"],
                    line.ship_name, "name")
         fill_field(page, ["input[name='address']", "input[name='street']", "input[name='address1']"], line.address1, "street")

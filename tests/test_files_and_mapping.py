@@ -91,6 +91,7 @@ def test_mapping_vendor_rules(tmp_path):
 
 
 @pytest.mark.parametrize("text,n", [("Only 3 left in stock", 3), ("12 available", 12), ("More than 10 available", 10),
-                                    ("Last one", 1), ("Currently unavailable", 0), ("In Stock", None), ("", None)])
+                                    ("Last one", 1), ("Currently unavailable", 0), ("In Stock", 99), ("In stock.", 99),
+                                    ("Temporarily out of stock.", 0), ("Usually dispatched in 2 days", None), ("", None)])
 def test_parse_stock(text, n):
     assert parse_stock(text) == n

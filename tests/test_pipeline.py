@@ -68,7 +68,7 @@ def test_place_is_the_only_path_that_submits(tmp_path):
 
 
 def test_stock_unknown_and_out_of_stock_never_add(tmp_path):
-    for html, status in [('<span id="stock">In Stock</span>', "stock_unknown"), ('<span id="stock">1 available</span><input id="qty">', "out_of_stock")]:
+    for html, status in [('<span id="stock">Usually dispatched soon</span>', "stock_unknown"), ('<span id="stock">1 available</span><input id="qty">', "out_of_stock")]:
         sub = tmp_path / status
         sub.mkdir()
         _, sess, out = run_au(sub, [kogan_row("K1", "K-1", Quantity=3)], [("K-1", "amazon_au", AMZ, "")], html=html)
@@ -146,3 +146,29 @@ def test_costco_po_box_refused_before_browser(tmp_path):
 
 def test_is_po_box():
     assert is_po_box("P.O. Box 5") and is_po_box("", "parcel locker 9") and not is_po_box("1 Test Street")
+
+
+def test_in_stock_without_number_is_bought(tmp_path):
+    code, sess, out = run_au(tmp_path, [kogan_row("K1", "K-1", Quantity=1)], [("K-1", "amazon_au", AMZ, "")],
+                             html=PRODUCT_HTML.replace("7 available", "In stock"))
+    row = sheet(out / "kogan-done.xlsx")[0]
+    assert row["status"] == "ready_for_payment" and row["stock_seen"] == 99
+
+
+def test_costway_email_optional_when_profile_has_it():
+    from tests.helpers import FakePage
+    from vendors.base import VendorError
+    from vendors.costway_au import CostwayAU
+
+    v = CostwayAU(Account("c", "costway_au", "au", "P1", "", 9235))
+    page = FakePage('<input id="email" value="x">')
+    page.values["email"] = "buyer@example.com"   # signed-in profile filled it
+    v.fill_email(page, ["#email"])
+    assert page.values["email"] == "buyer@example.com"
+    empty = FakePage('<input id="email" value="">')
+    empty.values["email"] = ""
+    with pytest.raises(VendorError):
+        v.fill_email(empty, ["#email"])
+    v.email = "set@example.com"
+    v.fill_email(empty, ["#email"])
+    assert empty.values["email"] == "set@example.com"

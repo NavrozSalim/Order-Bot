@@ -130,6 +130,25 @@ class Vendor:
         if self.require_email and not self.email:
             raise RefusedLine("account email is blank in accounts.json")
 
+    def fill_email(self, page, selectors, what="email"):
+        """Type the account email when there is one; a signed-in profile usually has it filled already.
+
+        Only an empty, visible email box with no account email stops the line.
+        """
+        loc = first_visible(page, selectors)
+        if loc is None:
+            return
+        if self.email:
+            loc.fill(self.email)
+            return
+        try:
+            current = (loc.input_value() or "").strip()
+        except Exception:
+            current = ""
+        if not current:
+            raise VendorError(f"checkout asks for an {what} and the purchase account has none; "
+                              "sign in to the vendor in this Chrome profile or add the email to the account")
+
     # ---- page steps ------------------------------------------------------------------
     def guard(self, page):
         url = (page.url or "").lower()

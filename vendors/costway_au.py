@@ -9,7 +9,7 @@ class CostwayAU(Vendor):
     name = "costway_au"
     region = "au"
     refuse_po_box = True
-    require_email = True
+    require_email = False  # the signed-in Chrome profile carries the email
     verify_sku_on_page = True
     cart_url = "https://au.costway.com/cart"
     cart_remove = ["button:has-text('Remove')", "a:has-text('Remove')", ".cart-item .delete"]
@@ -28,7 +28,7 @@ class CostwayAU(Vendor):
         click_required(page, ["button:has-text('Checkout')", "a:has-text('Checkout')", "button:has-text('CHECKOUT')"],
                        "Checkout")
         self.guard(page)
-        fill_field(page, ["input[name='email']", "input[type=email]"], self.email, "account email")
+        self.fill_email(page, ["input[name='email']", "input[type=email]"], "account email")
         fill_field(page, ["input[name='name']", "input[name='fullName']", "input[placeholder*='Name' i]"],
                    line.ship_name, "name")
         fill_field(page, ["input[name='phone']", "input[name='mobile']", "input[type=tel]"], line.phone, "mobile")

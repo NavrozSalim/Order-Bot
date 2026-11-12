@@ -8,7 +8,12 @@ _PATTERNS = [
     rf"(?:quantity\s+)?(?:available|in stock|stock)\s*[:\-]\s*{_NUM}",
     rf"(?:more than|over)\s+{_NUM}",
 ]
-_ZERO = ("out of stock", "currently unavailable", "sold out", "no longer available")
+_ZERO = ("out of stock", "currently unavailable", "sold out", "no longer available", "not in stock",
+         "not available")
+# "In stock" with no number (Amazon usually shows just that). The web app's check counts it as
+# available too; the quantity box still refuses a quantity the vendor cannot sell.
+IN_STOCK_NO_NUMBER = 99
+_IN_STOCK_RE = re.compile(r"\bin stock\b|\bavailable now\b|\bin-stock\b")
 
 
 def parse_stock(text):
@@ -21,4 +26,6 @@ def parse_stock(text):
         return 1
     if any(z in t for z in _ZERO):
         return 0
+    if _IN_STOCK_RE.search(t):
+        return IN_STOCK_NO_NUMBER
     return None

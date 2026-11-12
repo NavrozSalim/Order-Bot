@@ -78,7 +78,11 @@ number `UNREAD` (so a rerun cannot buy it twice) and an error asking you to chec
   screenshot and moves on.
 * Before each purchasable line the bot **empties the cart** of the purchase account so leftovers from dry-runs are not
   bought with it. Do not use an account whose cart you care about.
-* Stock is read from the number the page shows; no number means `stock_unknown` and nothing is added to the cart.
+* Stock is read from the number the page shows. "In stock" with no number (Amazon) counts as 99, like the web
+  app check; the quantity box still refuses a quantity the vendor cannot sell. Text with neither means `stock_unknown`
+  and nothing is added to the cart.
+* Costway / Vevor: the account email is optional. The signed-in Chrome profile fills the checkout email; only an
+  empty email box with no account email fails the line.
 * Costco AU / Costway AU refuse PO Box and Parcel Locker addresses. Costco AU only submits an address picked from a
   suggestion that matches suburb and postcode.
 * **Vendor selectors are best-effort.** They were written without access to logged-in vendor pages and will need
