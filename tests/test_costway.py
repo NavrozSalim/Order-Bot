@@ -1,0 +1,89 @@
+"""Costway AU product page as seen on the live site (colour swatches carry the SKU, no stock text)."""
+import pytest
+
+from core.browser import Account
+from vendors.base import VendorError
+from vendors.costway_au import CostwayAU
+
+PAGE = ('<div class="swatch-option image selected pushed" option-sku="HW68112BK" title="Black"></div>'
+        '<div class="swatch-option oos image" option-sku="HW68112RE" title="Red"></div>'
+        '<script type="application/ld+json">{"sku":"HW68112","offers":{"availability":"https://schema.org/InStock"}}</script>')
+
+
+class Loc:
+    def __init__(self, page, sku):
+        self.page, self.sku = page, sku
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1 if self.sku in self.page.classes else 0
+
+    def get_attribute(self, name):
+        return self.page.classes[self.sku]
+
+    def click(self):
+        self.page.classes[self.sku] += " selected"
+
+
+class Page:
+    def __init__(self, html=PAGE, classes=None):
+        self.html = html
+        self.classes = classes if classes is not None else {"HW68112BK": "swatch-option image selected",
+                                                              "HW68112RE": "swatch-option oos image"}
+
+    def locator(self, sel):
+        sku = sel.split("option-sku='")[1].split("'")[0] if "option-sku=" in sel else "__none__"
+        return Loc(self, sku)
+
+    def content(self):
+        return self.html
+
+    def inner_text(self, sel="body"):
+        return ""
+
+    def wait_for_load_state(self, *a, **k):
+        pass
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def vendor():
+    return CostwayAU(Account("c", "costway_au", "au", "Profile 1", "", 9235))
+
+
+def test_selected_colour_is_in_stock_and_sku_found():
+    v, page = vendor(), Page()
+    v.select_variant(page, "HW68112BK")
+    assert v.read_stock(page) == 99
+    v.check_sku(page, "HW68112BK")
+
+
+def test_unselected_colour_gets_clicked():
+    v, page = vendor(), Page(classes={"HW68112BK": "swatch-option image", "HW68112RE": "swatch-option image selected"})
+    v.select_variant(page, "HW68112BK")
+    assert "selected" in page.classes["HW68112BK"] and v.read_stock(page) == 99
+
+
+def test_out_of_stock_colour_reads_zero():
+    v, page = vendor(), Page()
+    v.select_variant(page, "HW68112RE")
+    assert v.read_stock(page) == 0
+
+
+def test_no_colours_uses_schema_availability():
+    v = vendor()
+    page = Page(classes={})
+    v.select_variant(page, "HW68112")
+    assert v.read_stock(page) == 99
+    oos = Page(html='{"availability":"https://schema.org/OutOfStock"}', classes={})
+    v.select_variant(oos, "X")
+    assert v.read_stock(oos) == 0
+
+
+def test_sku_missing_from_page_fails():
+    with pytest.raises(VendorError):
+        vendor().check_sku(Page(), "ZZ999")

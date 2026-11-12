@@ -3,9 +3,11 @@
 The bot never solves captchas or 2FA. When one shows up the line fails and the run goes on.
 Selectors in the vendor modules are best-effort starting points and need a supervised dry-run per vendor.
 """
+import re
+
 from core.address import AU_STATES, VALID_STATE_CODES, is_po_box, state_name
 from core.price import parse_price
-from core.stock import parse_stock
+from core.stock import IN_STOCK_NO_NUMBER, parse_stock
 
 
 class VendorError(Exception):
@@ -99,6 +101,9 @@ def choose_state(page, selectors, line):
         raise VendorError("could not set state") from None
 
 
+_AVAILABILITY_RE = re.compile(r'"availability"\s*:\s*"(?:https?://schema\.org/)?(\w+)"', re.I)
+
+
 class Vendor:
     name = ""
     region = ""                 # "us" / "au"
@@ -169,6 +174,9 @@ class Vendor:
         settle(page)
         self.guard(page)
 
+    def select_variant(self, page, vendor_sku):
+        """Pick the colour / size that is this vendor SKU (pages with variants). Default: nothing to pick."""
+
     def read_stock(self, page):
         for sel in self.stock_selectors:
             try:
@@ -179,6 +187,22 @@ class Vendor:
                 continue
             if n is not None:
                 return n
+        return self.stock_from_page_data(page)
+
+    def stock_from_page_data(self, page):
+        """No stock text: use the page's product data (schema.org availability), else None."""
+        try:
+            html = page.content()
+        except Exception:
+            return None
+        m = _AVAILABILITY_RE.search(html or "")
+        if not m:
+            return None
+        state = m.group(1).lower()
+        if state in ("instock", "limitedavailability", "onlineonly", "instoreonly"):
+            return IN_STOCK_NO_NUMBER
+        if state in ("outofstock", "soldout", "discontinued"):
+            return 0
         return None
 
     def read_price(self, page):

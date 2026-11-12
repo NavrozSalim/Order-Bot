@@ -92,6 +92,7 @@ def _process(line, mapping, account, vendor, store, place, lazy):
     stock, shot_base = "", store.screens / f"{_slug(line.order_id)}_{_slug(line.sku)}"
     try:
         vendor.open_product(page, entry.url)
+        vendor.select_variant(page, entry.vendor_sku)
         stock = vendor.read_stock(page)
         if stock is None:
             return _result(line, R.STOCK_UNKNOWN, entry, "", error="page shows no stock number",
@@ -111,6 +112,7 @@ def _process(line, mapping, account, vendor, store, place, lazy):
         vendor.check_sku(page, entry.vendor_sku)
         vendor.clear_cart(page)
         vendor.open_product(page, entry.url)
+        vendor.select_variant(page, entry.vendor_sku)
         vendor.set_quantity(page, line.buy_qty)
         vendor.add_to_cart(page)
         vendor.fill_shipping(page, line)
