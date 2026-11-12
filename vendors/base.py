@@ -287,8 +287,8 @@ class Vendor:
         if self.verify_sku_on_page and vendor_sku and vendor_sku.casefold() not in body_text(page).casefold():
             raise VendorError(f"vendor SKU {vendor_sku!r} not found on product page")
 
-    cart_confirm = ["button.action-accept", ".modal-footer button:has-text('OK')", "button:has-text('Confirm')",
-                    "button:has-text('Yes')"]
+    # "Remove this item?" box, only when one is open (Magento modal); never a page's other Confirm buttons.
+    cart_confirm = [".modal-popup._show button.action-accept", ".modal-popup._show button.action-primary"]
 
     def clear_cart(self, page):
         """Empty the purchase account's cart first, so only this order's product is bought.
@@ -308,7 +308,11 @@ class Vendor:
             for _ in range(25):
                 if not click_optional(page, self.cart_remove, 1200):
                     break
-                click_optional(page, self.cart_confirm, 1200)
+                if self.cart_confirm:
+                    try:
+                        click_optional(page, self.cart_confirm, 1200)
+                    except Exception:
+                        pass  # optional: the removal itself is checked by reloading the cart
                 settle(page, 1500)
             goto(page, self.cart_url)  # reload: removals made with ajax may still show
             settle(page, 1500)

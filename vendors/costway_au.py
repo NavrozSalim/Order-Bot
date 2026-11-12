@@ -27,7 +27,8 @@ class CostwayAU(Vendor):
     require_email = False  # the signed-in Chrome profile carries the email
     verify_sku_on_page = True
     cart_url = "https://au.costway.com/checkout/cart"
-    cart_remove = ["a.action-delete", "a:has-text('Remove item')", "button:has-text('Remove')"]
+    cart_remove = ["a.action-delete", "a:has-text('Remove item')"]
+    cart_confirm = []  # "Remove item" reloads the cart at once, no confirm box (live site)
     stock_selectors = [".stock-status", ".product-info-stock-sku .stock", ".product-info-main .stock.available"]
     price_selectors = [".product-info-price [data-price-type='finalPrice'] .price", ".product-info-price .price",
                        "[data-price-type='finalPrice'] .price"]
