@@ -20,6 +20,9 @@ from .base import (goto, ChallengeError, Vendor, VendorError, body_text, choose_
                    first_visible, settle)
 
 
+CHECKOUT_URL = "https://au.costway.com/checkout/"
+
+
 class CostwayAU(Vendor):
     name = "costway_au"
     region = "au"
@@ -100,8 +103,12 @@ class CostwayAU(Vendor):
             lines = 1
         if lines != 1:
             raise VendorError(f"cart holds {lines} products instead of 1; not checked out")
-        click_required(page, ["button.checkout", "button:has-text('Proceed to Checkout')"], "Proceed to Checkout")
+        # Open checkout directly (the cart's "Proceed to Checkout" button is flaky); fall back to the button.
+        goto(page, CHECKOUT_URL)
         settle(page, 4000)
+        if "/checkout/cart" in (page.url or "") or "/checkout" not in (page.url or ""):
+            click_required(page, ["button.checkout", "button:has-text('Proceed to Checkout')"], "Proceed to Checkout")
+            settle(page, 4000)
         if first_visible(page, ["button.guest-button", "button:has-text('Continue as Guest')"], 1500) is not None:
             raise ChallengeError("Costway is not signed in in this Chrome profile; on the laptop run "
                                  f"python open_profile.py \"{self.account.chrome_profile}\" and sign in to Costway")

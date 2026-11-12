@@ -91,6 +91,7 @@ def click_loc(page, loc, tries=CLICK_TRIES):
     """Click with 3 tries. Between tries: close popups, press Escape, scroll to the element, wait 2 s.
     Last resort: click it from the page's own script (gets past an overlay covering the button)."""
     last = None
+    url_before = getattr(page, "url", None)
     for attempt in range(tries):
         try:
             loc.scroll_into_view_if_needed(timeout=3000)
@@ -101,6 +102,8 @@ def click_loc(page, loc, tries=CLICK_TRIES):
             return
         except Exception as e:
             last = e
+        if url_before is not None and getattr(page, "url", None) not in (None, url_before):
+            return  # the click went through: the page moved on and the button is gone
         try:
             page.evaluate(_DISMISS_POPUPS_JS)
             page.keyboard.press("Escape")
