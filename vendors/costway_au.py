@@ -16,7 +16,7 @@ import re
 
 from core.address import split_name
 from core.stock import IN_STOCK_NO_NUMBER
-from .base import (goto, ChallengeError, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
+from .base import (goto, ChallengeError, Vendor, VendorError, body_text, click_loc, choose_state, click_optional, click_required, fill_field,
                    first_visible, settle)
 
 
@@ -135,16 +135,86 @@ class CostwayAU(Vendor):
                               "button:has-text('Next')", "button:has-text('Continue')"], 5000)
         settle(page, 4000)
         self.guard(page)
-        if first_visible(page, self.place_selectors, 10000) is None:
-            raise VendorError("payment step with place-order button not reached; " + _where(page))
+        self.choose_paypal(page)
+
+    # ---- payment: PayPal (already linked to the signed-in Costway account) -------------------
+    def choose_paypal(self, page):
+        """Payment step: pick PayPal and make sure "Continue to PayPal" is there. Nothing is paid here."""
+        if first_visible(page, PAYPAL_OPTION, 20000) is None:
+            raise VendorError("payment step with PayPal not reached; " + _where(page))
+        click_required(page, PAYPAL_OPTION, "PayPal payment option")
+        settle(page, 2000)
+        if first_visible(page, CONTINUE_TO_PAYPAL, 10000) is None:
+            raise VendorError("PayPal chosen but 'Continue to PayPal' not shown; " + _where(page))
 
     def submit_order(self, page):
-        click_required(page, self.place_selectors, "Place Order")
-        settle(page, 5000)
+        """Only with --place: Continue to PayPal, then Pay on PayPal, then back on Costway's success page.
+
+        Errors before the Pay click fail the line (nothing paid). After the Pay click nothing is raised:
+        the line is recorded as purchased so it can never be bought twice.
+        """
+        self._done_page = page
+        ctx = page.context
+        before = list(ctx.pages)
+        click_required(page, CONTINUE_TO_PAYPAL, "Continue to PayPal")
+        pp = _wait_for_page(ctx, before, page, lambda u: "paypal.com" in u, 60)
+        if pp is None:
+            raise VendorError("PayPal did not open after 'Continue to PayPal'; " + _where(page))
+        settle(pp, 3000)
+        try:
+            pw = pp.locator("input[type=password]:visible").count()
+        except Exception:
+            pw = 0
+        if pw:
+            raise ChallengeError("PayPal asks to sign in; sign in to PayPal once in this Chrome profile "
+                                 "(nothing was paid)")
+        pay = first_visible(pp, PAYPAL_PAY, 30000)
+        if pay is None:
+            raise VendorError("PayPal 'Pay' button not found (nothing was paid); " + _where(pp))
+        click_loc(pp, pay)  # ---- money moves from here on: never raise below this line
+        try:
+            back = _wait_for_page(ctx, [], page, lambda u: "costway.com" in u and "paypal.com" not in u, 120)
+            if back is not None:
+                settle(back, 3000)
+                # Some shops return to a review page with a last "Place Order" button.
+                if "review" in (back.url or "") and first_visible(back, self.place_selectors, 5000) is not None:
+                    click_required(back, self.place_selectors, "Place Order")
+                    settle(back, 5000)
+                _wait_for_page(ctx, [], back, lambda u: "success" in u, 60)
+                self._done_page = _wait_for_page(ctx, [], back, lambda u: "costway.com" in u, 1) or back
+        except Exception:
+            pass
 
     def read_order_number(self, page):
-        m = self.order_re.search(body_text(page))
+        target = getattr(self, "_done_page", None) or page
+        m = self.order_re.search(body_text(target))
         return m.group(1) if m else None
+
+
+PAYPAL_OPTION = ["input#paypal_express", "input[value='paypal_express']", "input[value*='paypal' i]",
+                 "label[for*='paypal' i]", "label:has-text('PayPal')", "text=PayPal"]
+CONTINUE_TO_PAYPAL = ["button:has-text('Continue to PayPal')", "a:has-text('Continue to PayPal')",
+                      "._active button.checkout:has-text('PayPal')", "button:has-text('Continue to Paypal')"]
+PAYPAL_PAY = ["#payment-submit-btn", "button[data-testid='submit-button-initial']", "button:text-is('Pay')",
+              "button:text-is('Pay Now')", "button:has-text('Complete Purchase')", "button:has-text('Agree and Pay')",
+              "button:has-text('Pay AU$')", "button:has-text('Pay $')"]
+
+
+def _wait_for_page(ctx, before, page, match, seconds):
+    """The first tab (a new PayPal window, or ``page`` itself) whose address matches, polling each second."""
+    for _ in range(max(1, int(seconds))):
+        pages = [p for p in getattr(ctx, "pages", []) if p not in before] + [page]
+        for p in pages:
+            try:
+                if match((p.url or "").lower()):
+                    return p
+            except Exception:
+                continue
+        try:
+            page.wait_for_timeout(1000)
+        except Exception:
+            pass
+    return None
 
 
 _WHERE_JS = r"""() => {
