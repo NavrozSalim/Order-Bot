@@ -33,6 +33,8 @@ class CostwayAU(Vendor):
                        "[data-price-type='finalPrice'] .price"]
     qty_selectors = ["input#qty", "input[name='qty']"]
     add_selectors = ["#add-to-cart-button", "button.cart-btn", "#product-addtocart-button"]
+    # "Subscribe now ... coupon bundle" popup (live site); the generic popup closer covers the country picker.
+    popup_close_selectors = ["#subscribe-modal .close-button", ".gtm-pop-x"]
     place_selectors = ["button.checkout:has-text('Place Order')", "button:has-text('Place Order')",
                        "button:has-text('Pay Now')"]
     order_re = re.compile(r"order\s*(?:number|#|no\.?)\s*(?:is)?\s*:?\s*#?\s*([0-9]{6,}|[A-Z0-9-]{8,})", re.I)

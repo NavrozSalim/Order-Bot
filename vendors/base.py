@@ -104,6 +104,28 @@ def choose_state(page, selectors, line):
 _AVAILABILITY_RE = re.compile(r'"availability"\s*:\s*"(?:https?://schema\.org/)?(\w+)"', re.I)
 
 
+# Finds visible popups about subscribing, coupons or picking a country/region and clicks their close (X).
+# Never touches checkout / address dialogs.
+_DISMISS_POPUPS_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+  const words = /subscribe|newsletter|coupon|sign up for|% off|\$\d+ off|select your (country|region|location)|choose your (country|region|location)|change (country|region)|ship to|stay on|go to .* site|united states|deutschland|united kingdom/i;
+  const skip = /checkout|address|shipping|payment|minicart|cart/i;
+  let n = 0;
+  const done = new Set();
+  const boxes = document.querySelectorAll('[class*=modal i],[class*=popup i],[class*=dialog i],[role=dialog],[id*=modal i],[id*=popup i]');
+  for (const el of boxes) {
+    if (!vis(el) || skip.test(String(el.className) + ' ' + el.id)) continue;
+    if (el.querySelector('input[name^=street], input[name=postcode], input[name=telephone]')) continue;
+    if (!words.test(el.innerText || '')) continue;
+    const c = [...el.querySelectorAll('[class*=close i],[aria-label*=close i],[data-role=closeBtn],.gtm-pop-x,[class*=dismiss i]')]
+      .find(x => vis(x) && x.getBoundingClientRect().width < 80);
+    if (c && !done.has(c)) { done.add(c); c.click(); n++; }
+  }
+  return n;
+}"""
+
+
 class Vendor:
     name = ""
     region = ""                 # "us" / "au"
@@ -155,7 +177,33 @@ class Vendor:
                               "sign in to the vendor in this Chrome profile or add the email to the account")
 
     # ---- page steps ------------------------------------------------------------------
+    popup_close_selectors = []  # vendor-specific popup close buttons, clicked when visible
+
+    def dismiss_popups(self, page):
+        """Close marketing popups (subscribe / coupon / choose-your-country) so they do not block clicks."""
+        closed = 0
+        for sel in self.popup_close_selectors:
+            try:
+                loc = page.locator(sel)
+                for i in range(min(loc.count(), 3)):
+                    if loc.nth(i).is_visible():
+                        loc.nth(i).click(timeout=1500)
+                        closed += 1
+            except Exception:
+                continue
+        try:
+            closed += int(page.evaluate(_DISMISS_POPUPS_JS) or 0)
+        except Exception:
+            pass
+        if closed:
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+        return closed
+
     def guard(self, page):
+        self.dismiss_popups(page)
         url = (page.url or "").lower()
         text = body_text(page).lower()
         for kind, pats in CHALLENGES:
@@ -252,6 +300,7 @@ class Vendor:
             pass
 
     def add_to_cart(self, page):
+        self.dismiss_popups(page)  # popups often appear a few seconds after the page loads
         click_required(page, self.add_selectors, "add to cart / buy button")
         self.guard(page)
 
