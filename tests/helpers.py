@@ -100,7 +100,7 @@ class FakeLoc:
     def input_value(self):
         return self.page.values.get(self._id(), "1")
 
-    def click(self):
+    def click(self, **k):
         self.page.clicks.append(self._id())
 
 

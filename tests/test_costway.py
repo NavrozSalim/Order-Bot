@@ -24,7 +24,7 @@ class Loc:
     def get_attribute(self, name):
         return self.page.classes[self.sku]
 
-    def click(self):
+    def click(self, **k):
         self.page.classes[self.sku] += " selected"
 
 
@@ -100,3 +100,44 @@ def test_bot_profile_keeps_session_cookies(tmp_path):
     keep_session_cookies(acct)
     data = json.loads(prefs.read_text())
     assert data["session"]["restore_on_startup"] == 1 and data["profile"]["name"] == "x"
+
+
+class FlakyLoc:
+    def __init__(self, fails, js_ok=True):
+        self.fails, self.js_ok, self.tries, self.js = fails, js_ok, 0, 0
+
+    def click(self, **k):
+        self.tries += 1
+        if self.tries <= self.fails:
+            raise TimeoutError("covered by a popup")
+
+    def evaluate(self, script):
+        if not self.js_ok:
+            raise RuntimeError("gone")
+        self.js += 1
+
+
+class QuietPage:
+    class keyboard:
+        @staticmethod
+        def press(k):
+            pass
+
+    def evaluate(self, js):
+        return 0
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_click_retries_three_times_then_script_click():
+    from vendors.base import click_loc
+
+    loc = FlakyLoc(fails=2)
+    click_loc(QuietPage(), loc)
+    assert loc.tries == 3 and loc.js == 0
+    stuck = FlakyLoc(fails=99)
+    click_loc(QuietPage(), stuck)
+    assert stuck.tries == 3 and stuck.js == 1
+    with pytest.raises(TimeoutError):
+        click_loc(QuietPage(), FlakyLoc(fails=99, js_ok=False))

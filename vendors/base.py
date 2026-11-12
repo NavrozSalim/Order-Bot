@@ -67,20 +67,59 @@ def first_visible(page, selectors, timeout=2500):
     for sel in selectors:
         loc = page.locator(sel).first
         try:
-            if page.locator(sel).count() == 0:
+            n = page.locator(sel).count()
+            if n == 0:
                 continue
             loc.wait_for(state="visible", timeout=timeout)
         except Exception:
-            continue
+            # The first match may be a hidden copy (Costway has several); take the first visible one.
+            if not n or n < 2:
+                continue
+            try:
+                loc = page.locator(f"{sel} >> visible=true").first
+                loc.wait_for(state="visible", timeout=1000)
+            except Exception:
+                continue
         return loc
     return None
+
+
+CLICK_TRIES = 3
+
+
+def click_loc(page, loc, tries=CLICK_TRIES):
+    """Click with 3 tries. Between tries: close popups, press Escape, scroll to the element, wait 2 s.
+    Last resort: click it from the page's own script (gets past an overlay covering the button)."""
+    last = None
+    for attempt in range(tries):
+        try:
+            loc.scroll_into_view_if_needed(timeout=3000)
+        except Exception:
+            pass
+        try:
+            loc.click(timeout=10000)
+            return
+        except Exception as e:
+            last = e
+        try:
+            page.evaluate(_DISMISS_POPUPS_JS)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(2000)
+        except Exception:
+            pass
+    try:
+        loc.evaluate("el => el.click()")
+        return
+    except Exception:
+        pass
+    raise last
 
 
 def click_optional(page, selectors, timeout=2000):
     loc = first_visible(page, selectors, timeout)
     if loc is None:
         return False
-    loc.click()
+    click_loc(page, loc)
     settle(page)
     return True
 
