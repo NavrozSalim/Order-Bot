@@ -31,8 +31,7 @@ class Amazon(Vendor):
         click_required(page, ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",
                               "a:has-text('Proceed to checkout')"], "Proceed to checkout")
         self.guard(page)
-        click_optional(page, ["#add-new-address-popover-link", "a:has-text('Add a new delivery address')",
-                              "a:has-text('Add a new address')"], 4000)
+        self.open_new_address_form(page)
         p = "#address-ui-widgets-"
         fill_field(page, [p + "enterAddressFullName"], line.ship_name, "full name")
         fill_field(page, [p + "enterAddressPhoneNumber"], line.phone, "phone")
@@ -60,6 +59,30 @@ class Amazon(Vendor):
             raise VendorError("review page with place-order button not reached")
         self.confirm_address_shown(page, line)
 
+    def open_new_address_form(self, page):
+        """Get from "Proceed to checkout" to the new-address form.
+
+        Amazon may first show a page with "Continue" (or a Prime offer: "No thanks"), and a checkout with a
+        saved address needs "Change" before "Add a new delivery address". Up to 4 rounds.
+        The review page later checks that the customer's address is the one shown.
+        """
+        for _ in range(4):
+            if first_visible(page, [ADDRESS_NAME_FIELD], 2000) is not None:
+                return
+            if click_optional(page, ADD_ADDRESS_LINKS, 2500):
+                settle(page, 1500)
+                continue
+            if click_optional(page, CHANGE_ADDRESS_LINKS, 1500):
+                settle(page, 1500)
+                continue
+            if click_optional(page, INTERSTITIAL_CONTINUE, 2500):
+                settle(page, 2000)
+                self.guard(page)
+                continue
+            break
+        if first_visible(page, [ADDRESS_NAME_FIELD], 5000) is None:
+            raise VendorError("new delivery address form not reached; " + _where(page))
+
     def submit_order(self, page):
         click_required(page, self.place_selectors, "Place your order")
         settle(page, 2500)
@@ -67,3 +90,33 @@ class Amazon(Vendor):
     def read_order_number(self, page):
         m = self.order_re.search(body_text(page))
         return m.group(0) if m else None
+
+
+ADDRESS_NAME_FIELD = "#address-ui-widgets-enterAddressFullName"
+ADD_ADDRESS_LINKS = ["#add-new-address-popover-link", "#add-new-address-desktop-sasp-tango-link",
+                     "a:has-text('Add a new delivery address')", "a:has-text('Add a new address')",
+                     "span:has-text('Add a new delivery address')"]
+CHANGE_ADDRESS_LINKS = ["#addressChangeLinkId", "#change-delivery-link", "a[aria-label*='Change delivery address' i]",
+                        "#shipaddress a:has-text('Change')", "#deliver-to-address-text ~ a:has-text('Change')"]
+# Pages between the cart and the address step: a "Continue" page and Prime offers.
+INTERSTITIAL_CONTINUE = ["input[value='Continue']", "input[aria-labelledby*='continue' i]", "span:has-text('Continue') input",
+                         "button:text-is('Continue')", "a:text-is('Continue')", ".a-button-text:text-is('Continue')",
+                         "#prime-interstitial-nothanks-button", "a:has-text('No thanks')", "a:has-text('No, thanks')"]
+
+
+_WHERE_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const btns = [...document.querySelectorAll('button, a, input[type=submit]')].filter(vis)
+    .map(b => (b.innerText || b.value || '').trim().replace(/\s+/g, ' ')).filter(t => t && t.length < 40);
+  return [...new Set(btns)].slice(0, 15);
+}"""
+
+
+def _where(page):
+    try:
+        btns = page.evaluate(_WHERE_JS) or []
+    except Exception:
+        btns = []
+    url = (getattr(page, "url", "") or "").split("?")[0]
+    return (f"page {url}" + ("; buttons: " + ", ".join(btns) if btns else ""))[:500]
