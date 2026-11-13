@@ -288,3 +288,29 @@ def test_review_without_customer_address_is_not_ordered(page, monkeypatch):
     page.set_content(LATE_SHADOW_REVIEW.replace("65 Somerset Grove, CRAIGMORE, SA, 5114", "1 Home Road, PARRAMATTA NSW 2150"))
     with pytest.raises(base.VendorError, match="missing postcode, house number, street name"):
         AmazonAU(Account("a", "amazon_au", "au", "Default")).confirm_address_shown(page, AmzLine())
+
+
+# Variant: "Use this address" closes the form and adds the new address to the list, NOT ticked;
+# "Deliver to this address" delivers to whichever radio is ticked (Greg Hearne unless the bot ticks Ange N).
+AMZ_CHECKOUT_LIST = AMZ_CHECKOUT.replace(
+    '<input type="radio" name="sel" checked> Greg Hearne',
+    '<div id="rows"><div class="address-row"><input type="radio" name="sel" checked '
+    'data-q="n=Greg%20Hearne&s=1A%20Lincoln%20Road&c=PORT%20MACQUARIE&p=2444"> Greg Hearne').replace(
+    'PORT MACQUARIE, NSW, 2444\n', 'PORT MACQUARIE, NSW, 2444</div></div>\n').replace(
+    "location.href='/checkout/p/review?n=Greg%20Hearne&s=1A%20Lincoln%20Road&c=PORT%20MACQUARIE&p=2444'",
+    "location.href='/checkout/p/review?'+document.querySelector('input[name=sel]:checked').dataset.q").replace(
+    "location.href = '/checkout/p/review?' + q.toString();",
+    "const row = document.createElement('div'); row.className = 'address-row';"
+    "row.innerHTML = '<input type=radio name=sel data-q=\"' + q.toString() + '\"> ' + g('enterAddressFullName') + ' '"
+    " + g('enterAddressLine1').toUpperCase() + ', ' + city + ', SA, ' + g('enterAddressPostalCode') + ', Australia';"
+    "document.getElementById('rows').appendChild(row); document.getElementById('pop-modal').style.display='none';")
+
+
+def test_amazon_address_list_after_use_this_address_ticks_customer(page):
+    assert AMZ_CHECKOUT_LIST != AMZ_CHECKOUT and "appendChild(row)" in AMZ_CHECKOUT_LIST
+    serve(page, {"/gp/cart/view.html": AMZ_CART, "/checkout/entry/cart": AMZ_CONTINUE, "/checkout/p/address": AMZ_CHECKOUT_LIST,
+                 "/checkout/p/review": AMZ_REVIEW, "/gp/buy/thankyou": AMZ_THANKS})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    v.fill_shipping(page, AmzLine())
+    addr = page.inner_text("#addr")
+    assert "65 SOMERSET GROVE" in addr and "5114" in addr and "Greg" not in addr

@@ -4,7 +4,7 @@ import re
 from core.address import split_name
 from .base import (goto, click_loc, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
                    click_required, fill_field,
-                   find_required, first_visible, page_buttons, settle)
+                   address_keys, find_required, first_visible, page_buttons, settle)
 
 
 class Amazon(Vendor):
@@ -65,7 +65,12 @@ class Amazon(Vendor):
             if not click_optional(page, KEEP_ENTERED_ADDRESS, 4000):
                 raise VendorError("Amazon suggested a different address; not confirmed; " + page_buttons(page))
             settle(page, 2000)
-        click_optional(page, _btn("Deliver to this address") + ["a:has-text('Deliver to this address')"], 4000)
+        # Back on the list of saved addresses: tick the customer's one before "Deliver to this address".
+        if first_visible(page, _btn("Deliver to this address"), 3000) is not None:
+            if not self.select_customer_address(page, line):
+                raise VendorError("the customer's address is not in Amazon's address list after "
+                                  "'Use this address'; not ordered; " + page_buttons(page))
+            click_optional(page, _btn("Deliver to this address") + ["a:has-text('Deliver to this address')"], 4000)
         click_optional(page, ["input[name*='SetPaymentPlanSelectContinueEvent']"] + _btn("Use this payment method"), 4000)
         click_optional(page, _btn("Continue"), 3000)
         self.guard(page)
@@ -96,6 +101,18 @@ class Amazon(Vendor):
             break
         if first_visible(page, [ADDRESS_NAME_FIELD], 5000) is None:
             raise VendorError("new delivery address form not reached; " + _where(page))
+
+    @staticmethod
+    def select_customer_address(page, line):
+        """Tick the radio of the saved address that has the customer's postcode, house number and street."""
+        keys = [k for _, k in address_keys(line)]
+        try:
+            ok = page.evaluate(_SELECT_ADDRESS_JS, keys)
+        except Exception:
+            return False
+        if ok:
+            settle(page, 1000)
+        return bool(ok)
 
     def set_suburb(self, page, line):
         """Suburb: a box to type in, or (Amazon AU) a dropdown of the postcode's suburbs."""
@@ -258,3 +275,23 @@ USE_ADDRESS = ["#address-ui-widgets-form-submit-button input.a-button-input",
                "#checkout-primary-continue-button-id input", "input[data-testid='bottom-continue-button']"] + _btn("Use this address")
 KEEP_ENTERED_ADDRESS = (["#address-ui-widgets-original-address-block_id input", "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']"]
                         + _btn("Use this address") + _btn("Save address") + _btn("Use address as entered"))
+
+
+# Saved-address list: the radio whose row shows every key (postcode, house number, street name).
+_SELECT_ADDRESS_JS = r"""(keys) => {
+  const norm = t => ' ' + (t || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim() + ' ';
+  const has = el => keys.every(k => norm(el.innerText).includes(' ' + k + ' '));
+  for (const r of document.querySelectorAll('input[type=radio]')) {
+    // Climb from the radio to its own row: stop before an element that holds another radio (the whole list).
+    let row = r;
+    for (let i = 0; i < 6 && row.parentElement && row.parentElement.querySelectorAll('input[type=radio]').length === 1; i++) {
+      row = row.parentElement;
+      if (has(row)) break;
+    }
+    if (row !== r && has(row)) {
+      if (!r.checked) r.click();
+      return r.checked;
+    }
+  }
+  return false;
+}"""
