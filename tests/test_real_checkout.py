@@ -328,3 +328,38 @@ def test_amazon_address_list_after_use_this_address_ticks_customer(page):
     v.fill_shipping(page, AmzLine())
     addr = page.inner_text("#addr")
     assert "65 SOMERSET GROVE" in addr and "5114" in addr and "Greg" not in addr
+
+
+AMZ_PRODUCT = """<html><body><span id="productTitle"> SD Card Reader for iPhone Lightning Camera Memory Adapter(2Pack) MFI
+Certified Photo Photography Viewer Adaptador Accessories for 11 12 13 14 Pro Max </span></body></html>"""
+AMZ_THANKS_NO_NUMBER = "<html><body>Order placed, thanks! Confirmation will be sent to your email.</body></html>"
+AMZ_HISTORY = """<html><body><h1>Your Orders</h1>
+<div class="order-card js-order-card">ORDER PLACED 13 November 2026 TOTAL $12.99 DISPATCH TO Greg Hearne
+  ORDER # 249-1111111-2222222 Kitchen Scale Digital 5kg</div>
+<div class="order-card js-order-card">ORDER PLACED 13 November 2026 TOTAL $4.70 DISPATCH TO Ange N
+  ORDER # 503-7159982-8255043 SD Card Reader for iPhone Lightning Camera Memory Adapter(2Pack) MFI Certified Photo Photography Viewer Adaptador Accessories for 11 12 1...</div>
+<div class="order-card js-order-card">ORDER PLACED 1 November 2026 DISPATCH TO Ange N
+  ORDER # 503-0000000-0000000 Phone case</div>
+</body></html>"""
+
+
+def test_amazon_order_number_from_returns_and_orders(page):
+    serve(page, {"/dp/B0C2GWBYZ2": AMZ_PRODUCT, "/gp/cart/view.html": AMZ_CART, "/checkout/entry/cart": AMZ_CONTINUE,
+                 "/checkout/p/address": AMZ_CHECKOUT, "/checkout/p/review": AMZ_REVIEW,
+                 "/gp/buy/thankyou": AMZ_THANKS_NO_NUMBER, "/gp/css/order-history": AMZ_HISTORY})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    v.open_product(page, "https://www.amazon.com.au/dp/B0C2GWBYZ2")
+    v.fill_shipping(page, AmzLine())
+    v.submit_order(page)
+    assert v.read_order_number(page) == "503-7159982-8255043"
+
+
+def test_amazon_order_not_in_history_stays_unread(page):
+    serve(page, {"/dp/B0C2GWBYZ2": AMZ_PRODUCT, "/gp/buy/thankyou": AMZ_THANKS_NO_NUMBER,
+                 "/gp/css/order-history": AMZ_HISTORY.replace("SD Card Reader", "Other thing")})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    v.open_product(page, "https://www.amazon.com.au/dp/B0C2GWBYZ2")
+    v._ship_name = "Ange N"
+    page.goto("https://www.amazon.com.au/gp/buy/thankyou")
+    page.wait_for_timeout = lambda ms: None  # skip the 5 s waits between tries
+    assert v.read_order_number(page) is None

@@ -33,6 +33,7 @@ class Amazon(Vendor):
         click_required(page, ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",
                               "a:has-text('Proceed to checkout')"], "Proceed to checkout")
         self.guard(page)
+        self._ship_name = line.ship_name
         self.open_new_address_form(page)
         # Country first and only when it differs: choosing a country redraws the form and clears it.
         self.set_country(page, line)
@@ -217,9 +218,37 @@ class Amazon(Vendor):
         click_required(page, self.place_selectors, "Place your order")
         settle(page, 2500)
 
+    def open_product(self, page, url):
+        super().open_product(page, url)
+        try:  # kept to find the order in "Returns & orders" after it is placed
+            self._title = (page.locator("#productTitle").first.inner_text(timeout=3000) or "").strip()
+        except Exception:
+            self._title = getattr(self, "_title", "")
+
     def read_order_number(self, page):
+        """The order number on the confirmation page, else from "Returns & orders": the newest order whose
+        product title and "Dispatch to" name match this purchase."""
         m = self.order_re.search(body_text(page))
-        return m.group(0) if m else None
+        if m:
+            return m.group(0)
+        return self.find_order_in_history(page)
+
+    def find_order_in_history(self, page, tries=3):
+        title = getattr(self, "_title", "")
+        name = getattr(self, "_ship_name", "")
+        if not title:
+            return None
+        for _ in range(tries):  # a new order can take a few seconds to show in the list
+            goto(page, self.base + ORDER_HISTORY_PATH)
+            settle(page, 2000)
+            try:
+                number = page.evaluate(_FIND_ORDER_JS, [title, name])
+            except Exception:
+                number = None
+            if number and self.order_re.fullmatch(number):
+                return number
+            page.wait_for_timeout(5000)
+        return None
 
 
 ADDRESS_NAME_FIELD = "#address-ui-widgets-enterAddressFullName"
@@ -382,3 +411,28 @@ def _value(page, selectors):
         except Exception:
             continue
     return ""
+
+
+ORDER_HISTORY_PATH = "/gp/css/order-history"
+
+# "Returns & orders": order cards newest first. A card matches when it shows the start of the product title
+# (Amazon cuts long titles) and the "Dispatch to" name; its "ORDER # 503-7159982-8255043" is returned.
+_FIND_ORDER_JS = r"""([title, name]) => {
+  const norm = t => (t || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+  const want = norm(title).split(' ').slice(0, 8).join(' ');
+  const who = norm(name);
+  const re = /\b\d{3}-\d{7}-\d{7}\b/;
+  const cards = [...document.querySelectorAll('.order-card, .js-order-card, .a-box-group, [class*=order-card i]')]
+    .filter(c => re.test(c.innerText || ''));
+  const seen = new Set();
+  for (const c of cards) {
+    const text = c.innerText || '';
+    const num = text.match(re)[0];
+    if (seen.has(num)) continue;
+    seen.add(num);
+    const t = norm(text);
+    if (want && t.includes(want) && (!who || t.includes(who))) return num;
+    if (seen.size >= 10) break;  // only the newest orders
+  }
+  return null;
+}"""
