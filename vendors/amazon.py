@@ -473,7 +473,7 @@ _FIND_ORDER_JS = r"""([title, name]) => {
   return null;
 }"""
 # The edit form of a saved address can name its button differently.
-USE_ADDRESS = USE_ADDRESS + _btn("Save changes") + _btn("Update address") + _btn("Save")
+USE_ADDRESS = USE_ADDRESS + _btn("Save changes") + _btn("Update address")
 
 
 def keep_addresses():
