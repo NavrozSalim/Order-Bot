@@ -95,3 +95,53 @@ def test_label_span_resolves_to_its_input():
     from vendors.base import editable
     span = SpanLoc()
     assert editable(object(), span) is span.inner
+
+
+class SuburbLine:
+    city, postcode = "Craigmore", "5114"
+
+
+class FormPage:
+    url = "https://www.amazon.com.au/checkout"
+
+    class keyboard:
+        @staticmethod
+        def press(k):
+            pass
+
+    def __init__(self, js_result=False):
+        self.js_result = js_result
+
+    def evaluate(self, js, arg=None):
+        if js is amz._SET_SUBURB_JS:
+            return self.js_result
+        if js is amz._FORM_FIELDS_JS:
+            return ["input#enterAddressPostalCode", "span#enterAddressCity"]
+        return []
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_suburb_picked_from_dropdown(monkeypatch):
+    clicked = []
+
+    def fv(p, sels, timeout=0):
+        if sels is amz.SUBURB_DROPDOWN:
+            return "prompt"
+        if sels and "Craigmore" in sels[0]:
+            return "CRAIGMORE option"
+        return None
+    monkeypatch.setattr(amz, "first_visible", fv)
+    monkeypatch.setattr(amz, "click_loc", lambda p, loc, tries=3: clicked.append(loc))
+    monkeypatch.setattr(amz, "settle", lambda p, ms=0: None)
+    vendor().set_suburb(FormPage(), SuburbLine())
+    assert clicked == ["prompt", "CRAIGMORE option"]
+
+
+def test_suburb_not_found_lists_the_form_fields(monkeypatch):
+    monkeypatch.setattr(amz, "first_visible", lambda p, sels, timeout=0: None)
+    monkeypatch.setattr(amz, "settle", lambda p, ms=0: None)
+    with pytest.raises(VendorError, match="span#enterAddressCity"):
+        vendor().set_suburb(FormPage(), SuburbLine())
+    vendor().set_suburb(FormPage(js_result=True), SuburbLine())  # hidden select set by the page script

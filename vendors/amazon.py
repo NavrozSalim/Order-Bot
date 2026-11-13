@@ -39,19 +39,18 @@ class Amazon(Vendor):
         fill_field(page, _inp("enterAddressLine1"), line.address1, "address 1")
         self.pick_suggestion(page, [line.address1[:10]])  # street autocomplete: keep what was typed if none
         fill_field(page, _inp("enterAddressLine2"), line.address2, "address 2", required=False)
-        fill_field(page, _inp("enterAddressCity"), line.city, "suburb")
-        # Amazon AU suggests "SUBURB, STATE POSTCODE": picking the customer's fills state and postcode.
-        picked = self.pick_suggestion(page, [line.postcode, line.city])
+        # Amazon AU: postcode first, then the suburb is picked from the suburbs of that postcode.
+        loc = first_visible(page, _inp("enterAddressPostalCode"), 5000)
+        if loc is not None:
+            type_into(page, loc, line.postcode)
+            settle(page, 2500)  # Amazon loads the suburbs for the postcode
+        self.set_suburb(page, line)
         try:
             choose_state(page, STATE_FIELDS, line)
         except VendorError:
-            if not picked:
-                raise
-        loc = first_visible(page, _inp("enterAddressPostalCode"), 3000)
-        if loc is not None:
-            type_into(page, loc, line.postcode)
-        elif not picked:
-            raise VendorError("field not found: postcode")
+            pass  # Amazon AU sets the state from postcode + suburb; the review page is checked later
+        if loc is None:
+            fill_field(page, _inp("enterAddressPostalCode"), line.postcode, "postcode")
         loc = first_visible(page, [p + "countryCode-dropdown-nativeId"], 1500)
         if loc is not None:
             try:
@@ -94,6 +93,37 @@ class Amazon(Vendor):
             break
         if first_visible(page, [ADDRESS_NAME_FIELD], 5000) is None:
             raise VendorError("new delivery address form not reached; " + _where(page))
+
+    def set_suburb(self, page, line):
+        """Suburb: a box to type in, or (Amazon AU) a dropdown of the postcode's suburbs."""
+        city = (line.city or "").strip()
+        for _ in range(3):
+            box = first_visible(page, _inp("enterAddressCity"), 2000)
+            if box is not None:
+                type_into(page, box, city)
+                self.pick_suggestion(page, [city])
+                return
+            prompt = first_visible(page, SUBURB_DROPDOWN, 3000)
+            if prompt is not None:
+                try:
+                    click_loc(page, prompt)
+                    settle(page, 800)
+                    opt = first_visible(page, _suburb_options(city), 4000)
+                    if opt is not None:
+                        click_loc(page, opt)
+                        settle(page, 1000)
+                        return
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
+            try:
+                if page.evaluate(_SET_SUBURB_JS, [_P + "enterAddressCity", city]):
+                    settle(page, 1000)
+                    return
+            except Exception:
+                pass
+            settle(page, 2500)  # suburbs may still be loading for the postcode
+        raise VendorError(f"suburb {city!r} could not be chosen; " + _form_fields(page))
 
     @staticmethod
     def pick_suggestion(page, must_contain):
@@ -168,3 +198,44 @@ def _inp(name):
 STATE_FIELDS = [f"select#{_P}enterAddressStateOrRegion-dropdown-nativeId", f"select[name='{_P}enterAddressStateOrRegion']",
                 f"select#{_P}enterAddressStateOrRegion", f"input#{_P}enterAddressStateOrRegion",
                 f"input[name='{_P}enterAddressStateOrRegion']"]
+
+
+SUBURB_DROPDOWN = [f"span#{_P}enterAddressCity .a-dropdown-prompt", f"#{_P}enterAddressCity .a-button-text",
+                   f"[id^='{_P}enterAddressCity'] .a-dropdown-prompt", f"span#{_P}enterAddressCity",
+                   f"[id^='{_P}enterAddressCity'][role=button]", f"[id^='{_P}enterAddressCity'] [role=button]"]
+
+
+def _suburb_options(city):
+    c = city.replace("'", "")
+    exact = f"text-matches('^{re.escape(c).replace(chr(92), '')}$', 'i')"  # Playwright trims spaces
+    return [f".a-popover:visible a.a-dropdown-link:{exact}", f".a-popover:visible li:{exact}",
+            f"[role=listbox] [role=option]:{exact}", f".a-popover:visible a.a-dropdown-link:has-text('{c}')",
+            f"[role=listbox] [role=option]:has-text('{c}')"]
+
+
+# Last resort: Amazon's dropdowns keep a hidden native <select>; choose the suburb there and tell the page.
+_SET_SUBURB_JS = r"""([prefix, city]) => {
+  const want = city.trim().toLowerCase();
+  for (const sel of document.querySelectorAll(`select[id^="${prefix}"], select[name^="${prefix}"]`)) {
+    const opt = [...sel.options].find(o => o.text.trim().toLowerCase() === want)
+             || [...sel.options].find(o => o.text.trim().toLowerCase().startsWith(want));
+    if (!opt) continue;
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', {bubbles: true}));
+    return true;
+  }
+  return false;
+}"""
+
+_FORM_FIELDS_JS = r"""() => [...document.querySelectorAll('[id^="address-ui-widgets-"]')]
+  .filter(e => /^(INPUT|SELECT|TEXTAREA|SPAN|DIV|BUTTON)$/.test(e.tagName))
+  .map(e => e.tagName.toLowerCase() + '#' + e.id.replace('address-ui-widgets-', '')
+            + (e.tagName === 'SELECT' ? '[' + e.options.length + ' options]' : ''))
+  .slice(0, 30)"""
+
+
+def _form_fields(page):
+    try:
+        return "address form fields: " + ", ".join(page.evaluate(_FORM_FIELDS_JS) or [])
+    except Exception:
+        return _where(page)
