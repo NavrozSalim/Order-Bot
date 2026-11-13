@@ -293,6 +293,12 @@ def _wait_for_pay_button(pp, seconds):
         if signed_out >= 3:  # a login form that stays, not a page in the middle of loading
             raise ChallengeError("PayPal asks to sign in; sign in to PayPal once in this Chrome profile "
                                  "(nothing was paid)")
+        if pw:  # never press Pay while a login form is on screen
+            try:
+                pp.wait_for_timeout(2000)
+            except Exception:
+                pass
+            continue
         for frame in (getattr(pp, "frames", None) or [pp]):
             try:
                 loc = first_visible(frame, PAYPAL_PAY, 500)
