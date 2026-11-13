@@ -363,3 +363,92 @@ def test_amazon_order_not_in_history_stays_unread(page):
     page.goto("https://www.amazon.com.au/gp/buy/thankyou")
     page.wait_for_timeout = lambda ms: None  # skip the 5 s waits between tries
     assert v.read_order_number(page) is None
+
+
+# Address book like the live account: two kept addresses (never edited) and an old customer's address.
+def _row(i, name, street, city, state, pc, checked=False):
+    q = f"n={name}&s={street}&c={city}&p={pc}".replace(" ", "%20")
+    return (f'<div class="address-row" id="row{i}"><input type="radio" name="sel" data-q="{q}"{" checked" if checked else ""}> '
+            f'<span class="t"><b>{name}</b><br>{street}, {city}, {state}, {pc}, Australia</span><br>'
+            f'<a href="#" class="edit" onclick="editRow({i});return false">Edit address</a> | <a href="#">Add delivery instructions</a></div>')
+
+
+AMZ_EDIT_BOOK = """<html><body><h1>Select a delivery address</h1><div id="rows">""" + \
+    _row(1, "Nisha Sharma", "23 Bellflower Ave", "TALLAWONG", "NSW", "2762") + \
+    _row(2, "Greg Hearne", "UNIT 151 1A LINCOLN ROAD", "PORT MACQUARIE", "NSW", "2444", checked=True) + \
+    _row(3, "Piyush Goplani", "46 STRINGER ROAD", "NORTH KELLYVILLE", "NSW", "2155") + \
+    """</div><a id="add-new-address-popover-link" href="#" onclick="openForm(0);return false">Add a new delivery address</a>
+""" + a_btn("deliverHere", "Deliver to this address",
+            "location.href='/checkout/p/review?'+document.querySelector('input[name=sel]:checked').dataset.q") + """
+<div class="a-popover a-popover-modal" role="dialog" id="pop" style="display:none;position:fixed;top:5%;left:20%;width:60%;height:80%;overflow-y:auto;background:#fff">
+<form onsubmit="return false">
+<select id="address-ui-widgets-countryCode-dropdown-nativeId"><option value="AU" selected>Australia</option><option value="US">United States</option></select>
+<input id="address-ui-widgets-enterAddressFullName"><input id="address-ui-widgets-enterAddressPhoneNumber">
+<input id="address-ui-widgets-enterAddressLine1"><input id="address-ui-widgets-enterAddressLine2">
+<input id="address-ui-widgets-enterAddressPostalCode"><input id="address-ui-widgets-enterAddressCity">
+""" + a_btn("address-ui-widgets-form-submit-button", "Use this address", "save()") + """
+</form></div>
+<script>
+let editing = 0;
+const f = i => document.getElementById('address-ui-widgets-' + i);
+function openForm(i) { editing = i; document.getElementById('pop').style.display = 'block'; }
+function editRow(i) {  // like Amazon: the form opens filled with that address
+  const t = document.querySelector('#row' + i + ' .t').innerText.split(String.fromCharCode(10));
+  const parts = t[1].split(', ');
+  f('enterAddressFullName').value = t[0]; f('enterAddressPhoneNumber').value = '0400000000';
+  f('enterAddressLine1').value = parts[0]; f('enterAddressLine2').value = 'Old line two';
+  f('enterAddressCity').value = parts[1]; f('enterAddressPostalCode').value = parts[3];
+  openForm(i);
+}
+function save() {
+  const v = k => f(k).value;
+  const q = new URLSearchParams({n: v('enterAddressFullName'), s: v('enterAddressLine1'), c: v('enterAddressCity'), p: v('enterAddressPostalCode')});
+  const html = '<input type="radio" name="sel" checked data-q="' + q + '"> <span class="t"><b>' + v('enterAddressFullName') + '</b><br>'
+    + v('enterAddressLine1') + (v('enterAddressLine2') ? ' ' + v('enterAddressLine2') : '') + ', ' + v('enterAddressCity').toUpperCase()
+    + ', SA, ' + v('enterAddressPostalCode') + ', Australia</span><br><a href="#" class="edit">Edit address</a>';
+  document.querySelectorAll('input[name=sel]').forEach(r => { r.checked = false; });
+  if (editing) { document.getElementById('row' + editing).innerHTML = html; }
+  else { const d = document.createElement('div'); d.className = 'address-row'; d.innerHTML = html; document.getElementById('rows').appendChild(d); }
+  document.getElementById('pop').style.display = 'none';
+}
+</script></body></html>"""
+
+
+def _run_book(page, monkeypatch, keep):
+    monkeypatch.setattr(amz, "keep_addresses", lambda: keep)
+    serve(page, {"/gp/cart/view.html": AMZ_CART, "/checkout/entry/cart": AMZ_CONTINUE, "/checkout/p/address": AMZ_EDIT_BOOK,
+                 "/checkout/p/review": AMZ_REVIEW})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    rows = {}
+
+    orig = v.save_new_address
+
+    def spy(p):
+        orig(p)
+        rows["after"] = p.evaluate("[...document.querySelectorAll('.address-row')].map(r => r.innerText)")
+    v.save_new_address = spy
+    v.fill_shipping(page, AmzLine())
+    return v, rows["after"]
+
+
+def test_amazon_edits_old_customer_address_not_kept_ones(page, monkeypatch):
+    v, rows = _run_book(page, monkeypatch, ["Nisha Sharma", "Piyush Goplani"])
+    assert v.edited_address == "Greg Hearne"
+    assert len(rows) == 3                                         # nothing added
+    assert "Nisha Sharma" in rows[0] and "23 Bellflower Ave" in rows[0]   # kept, untouched
+    assert "Piyush Goplani" in rows[2] and "46 STRINGER ROAD" in rows[2]  # kept, untouched
+    assert "Ange N" in rows[1] and "65 Somerset Grove" in rows[1] and "Greg" not in rows[1]
+    assert "Old line two" not in rows[1]                           # old line 2 cleared
+    assert "65 SOMERSET GROVE" in page.inner_text("#addr")
+
+
+def test_amazon_adds_new_address_when_every_address_is_kept(page, monkeypatch):
+    v, rows = _run_book(page, monkeypatch, ["Nisha Sharma", "Piyush Goplani", "Greg Hearne"])
+    assert v.edited_address == "" and len(rows) == 4
+    assert "Greg Hearne" in rows[1] and "Nisha Sharma" in rows[0] and "Piyush Goplani" in rows[2]
+    assert "Ange N" in rows[3]
+
+
+def test_amazon_without_keep_list_never_edits(page, monkeypatch):
+    v, rows = _run_book(page, monkeypatch, [])
+    assert v.edited_address == "" and len(rows) == 4 and "Greg Hearne" in rows[1]

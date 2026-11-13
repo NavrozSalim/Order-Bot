@@ -34,6 +34,8 @@ class Amazon(Vendor):
                               "a:has-text('Proceed to checkout')"], "Proceed to checkout")
         self.guard(page)
         self._ship_name = line.ship_name
+        self._edit_tried = False
+        self.edited_address = ""
         self.open_new_address_form(page)
         # Country first and only when it differs: choosing a country redraws the form and clears it.
         self.set_country(page, line)
@@ -41,7 +43,12 @@ class Amazon(Vendor):
         fill_field(page, _inp("enterAddressPhoneNumber"), line.phone, "phone")
         fill_field(page, _inp("enterAddressLine1"), line.address1, "address 1")
         self.pick_suggestion(page, [line.address1[:10]])  # street autocomplete: keep what was typed if none
-        fill_field(page, _inp("enterAddressLine2"), line.address2, "address 2", required=False)
+        if line.address2:
+            fill_field(page, _inp("enterAddressLine2"), line.address2, "address 2", required=False)
+        else:
+            old = first_visible(page, _inp("enterAddressLine2"), 1000)
+            if old is not None and _value(page, _inp("enterAddressLine2")):
+                old.fill("")  # an edited old address may have a line 2 the customer does not
         # Amazon AU: postcode first, then the suburb is picked from the suburbs of that postcode.
         loc = first_visible(page, _inp("enterAddressPostalCode"), 5000)
         if loc is not None:
@@ -81,6 +88,28 @@ class Amazon(Vendor):
             raise VendorError("review page with 'Place your order' not reached; " + page_buttons(page))
         self.confirm_address_shown(page, line)
 
+    def edit_old_address(self, page):
+        """On the list of saved addresses: click "Edit address" on an old customer's address so the new
+        customer's address is typed over it (the account does not fill up with addresses).
+
+        Never an address whose row shows a name from ``keep_addresses`` (agent.json); with no such list,
+        nothing is edited and a new address is added as before. Done once per order.
+        """
+        if getattr(self, "_edit_tried", False):
+            return False
+        keep = keep_addresses()
+        if not keep:
+            return False
+        try:
+            name = page.evaluate(_EDIT_ADDRESS_JS, keep)
+        except Exception:
+            name = None
+        if name:
+            self._edit_tried = True
+            self.edited_address = name
+            return True
+        return False
+
     def open_new_address_form(self, page):
         """Get from "Proceed to checkout" to the new-address form.
 
@@ -91,6 +120,9 @@ class Amazon(Vendor):
         for _ in range(4):
             if first_visible(page, [ADDRESS_NAME_FIELD], 2000) is not None:
                 return
+            if self.edit_old_address(page):  # reuse an old customer's address instead of adding one
+                settle(page, 1500)
+                continue
             if click_optional(page, ADD_ADDRESS_LINKS, 2500):
                 settle(page, 1500)
                 continue
@@ -437,6 +469,51 @@ _FIND_ORDER_JS = r"""([title, name]) => {
     const t = norm(text);
     if (want && t.includes(want) && (!who || t.includes(who))) return num;
     if (seen.size >= 10) break;  // only the newest orders
+  }
+  return null;
+}"""
+# The edit form of a saved address can name its button differently.
+USE_ADDRESS = USE_ADDRESS + _btn("Save changes") + _btn("Update address") + _btn("Save")
+
+
+def keep_addresses():
+    """Names of saved addresses the bot must never edit: agent.json "keep_addresses" and keep_addresses.txt
+    (one name per line) in the bot folder."""
+    import json
+
+    from core.browser import ROOT
+
+    names = []
+    try:
+        data = json.loads((ROOT / "agent.json").read_text(encoding="utf-8-sig"))
+        names += [str(n) for n in (data.get("keep_addresses") or [])]
+    except Exception:
+        pass
+    try:
+        names += (ROOT / "keep_addresses.txt").read_text(encoding="utf-8-sig").splitlines()
+    except Exception:
+        pass
+    return [n.strip() for n in names if n and n.strip()]
+
+
+# Saved-address list: click "Edit address" on the first address whose row shows none of the kept names.
+_EDIT_ADDRESS_JS = r"""(keep) => {
+  const norm = t => ' ' + (t || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim() + ' ';
+  const kept = keep.map(k => norm(k)).filter(k => k.trim());
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  for (const r of document.querySelectorAll('input[type=radio]')) {
+    let row = r;
+    for (let i = 0; i < 6 && row.parentElement && row.parentElement.querySelectorAll('input[type=radio]').length === 1; i++)
+      row = row.parentElement;
+    if (row === r || !vis(row)) continue;
+    const text = norm(row.innerText);
+    if (kept.some(k => text.includes(k))) continue;          // a kept address: never touched
+    const link = [...row.querySelectorAll('a, button, [role=button]')]
+      .find(a => vis(a) && /edit address/i.test(a.innerText || a.getAttribute('aria-label') || ''));
+    if (!link) continue;
+    link.click();
+    return (row.innerText || '').trim().split('\n').map(s => s.trim()).find(Boolean) || 'address';
   }
   return null;
 }"""
