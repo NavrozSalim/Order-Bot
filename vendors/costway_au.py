@@ -241,16 +241,10 @@ class CostwayAU(Vendor):
         if pp is None:
             raise VendorError("PayPal did not open after 'Continue to PayPal'; " + _where(page))
         settle(pp, 3000)
-        try:
-            pw = pp.locator("input[type=password]:visible").count()
-        except Exception:
-            pw = 0
-        if pw:
-            raise ChallengeError("PayPal asks to sign in; sign in to PayPal once in this Chrome profile "
-                                 "(nothing was paid)")
-        pay = first_visible(pp, PAYPAL_PAY, 30000)
+        pay = _wait_for_pay_button(pp, PAY_WAIT_SECONDS)
         if pay is None:
-            raise VendorError("PayPal 'Pay' button not found (nothing was paid); " + _where(pp))
+            raise VendorError(f"PayPal 'Pay' button not shown within {PAY_WAIT_SECONDS}s (nothing was paid); "
+                              + _where(pp))
         click_loc(pp, pay)  # ---- money moves from here on: never raise below this line
         try:
             back = _wait_for_page(ctx, [], page, lambda u: "costway.com" in u and "paypal.com" not in u, 120)
@@ -279,9 +273,45 @@ PAYPAL_OPTION = ["input#paypal_express", "input[value='paypal_express']", "input
                  "label[for*='paypal' i]", "label:has-text('PayPal')", "text=PayPal"]
 CONTINUE_TO_PAYPAL = ["button:has-text('Continue to PayPal')", "a:has-text('Continue to PayPal')",
                       "._active button.checkout:has-text('PayPal')", "button:has-text('Continue to Paypal')"]
-PAYPAL_PAY = ["#payment-submit-btn", "button[data-testid='submit-button-initial']", "button:text-is('Pay')",
-              "button:text-is('Pay Now')", "button:has-text('Complete Purchase')", "button:has-text('Agree and Pay')",
-              "button:has-text('Pay AU$')", "button:has-text('Pay $')"]
+PAYPAL_PAY = ["#payment-submit-btn", "[data-id='payment-submit-btn']", "button[data-testid='submit-button-initial']",
+              "button[data-testid*='submit' i]", "button:text-is('Pay')", "button:text-is('Pay Now')",
+              "button:has-text('Complete Purchase')", "button:has-text('Agree and Pay')", "button:has-text('Pay AU$')",
+              "button:has-text('Pay $')"]
+PAY_WAIT_SECONDS = 90
+
+
+def _wait_for_pay_button(pp, seconds):
+    """PayPal loads and reloads its page before the Pay button shows: keep looking (also inside its frames)
+    until the button is visible, enabled and still there a moment later."""
+    signed_out = 0
+    for _ in range(max(1, seconds // 2)):
+        try:
+            pw = pp.locator("input[type=password]:visible").count()
+        except Exception:
+            pw = 0
+        signed_out = signed_out + 1 if pw else 0
+        if signed_out >= 3:  # a login form that stays, not a page in the middle of loading
+            raise ChallengeError("PayPal asks to sign in; sign in to PayPal once in this Chrome profile "
+                                 "(nothing was paid)")
+        for frame in (getattr(pp, "frames", None) or [pp]):
+            try:
+                loc = first_visible(frame, PAYPAL_PAY, 500)
+            except Exception:
+                loc = None
+            if loc is None:
+                continue
+            try:
+                pp.wait_for_timeout(1500)  # let a reload finish: the button must still be there
+                if hasattr(loc, "is_visible") and not (loc.is_visible() and loc.is_enabled()):
+                    continue
+            except Exception:
+                continue
+            return loc
+        try:
+            pp.wait_for_timeout(2000)
+        except Exception:
+            pass
+    return None
 
 
 def _wait_for_page(ctx, before, page, match, seconds):

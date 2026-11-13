@@ -292,3 +292,20 @@ def test_no_customer_address_stops(monkeypatch):
     page = AddrPage([("Me 1 Home Rd Sydney 2150", True)])
     with pytest.raises(VendorError, match="not the selected delivery address"):
         vendor().check_selected_address(page, Line())
+
+
+def test_pay_button_found_after_paypal_reloads(monkeypatch):
+    import vendors.costway_au as cw
+    page = PPPage()
+    _patch(monkeypatch, page)
+    calls = {"n": 0}
+
+    def fv(p, sels, timeout=0):
+        if sels is cw.PAYPAL_PAY and "paypal.com" in p.url:
+            calls["n"] += 1
+            return "pay" if calls["n"] >= 5 else None  # still reloading for the first checks
+        return None
+    monkeypatch.setattr(cw, "first_visible", fv)
+    v = vendor()
+    v.submit_order(page)
+    assert page.clicked == ["Continue to PayPal", "Pay"] and v.read_order_number(page) == "4000123456"
