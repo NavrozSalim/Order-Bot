@@ -18,7 +18,7 @@ SCRIPTS = {"us": "run_us.py", "au": "run_au.py"}
 STDOUT_LIMIT = 20000
 # Job kinds this agent handles. "fetch_orders" downloads the marketplace orders file from the seller portal;
 # "purchase" buys one order (its mapping carries Max Price, which this bot enforces).
-KINDS = "run,fetch_orders,purchase"
+KINDS = "run,fetch_orders,purchase,lookup_order"
 
 
 def load_config(path=ROOT / "agent.json"):
@@ -50,7 +50,9 @@ def build_command(job, python, workdir):
     cmd = [python, SCRIPTS[job["region"]], "--marketplace", job["marketplace"],
            "--orders", str(workdir / "orders.xlsx"), "--mapping", str(workdir / "mapping.xlsx"),
            "--account", job["account"]]
-    if job["place"]:
+    if job.get("kind") == "lookup_order":
+        cmd.append("--lookup-orders")  # Recheck order ID: buys nothing
+    elif job["place"]:
         cmd.append("--place")
     return cmd + ["--accounts-file", str(workdir / "accounts.json"), "--output-dir", str(workdir / "output")]
 

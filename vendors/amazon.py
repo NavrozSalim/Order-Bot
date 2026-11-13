@@ -233,6 +233,10 @@ class Amazon(Vendor):
             return m.group(0)
         return self.find_order_in_history(page)
 
+    def find_order_number(self, page, line):
+        self._ship_name = line.ship_name
+        return self.find_order_in_history(page)
+
     def find_order_in_history(self, page, tries=3):
         title = getattr(self, "_title", "")
         name = getattr(self, "_ship_name", "")

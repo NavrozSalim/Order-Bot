@@ -553,6 +553,10 @@ class Vendor:
         """Click the final place-order control. Called ONLY when --place is given."""
         raise NotImplementedError
 
+    def find_order_number(self, page, line):
+        """Recheck order ID: the vendor's order number for this line, from its order list. Per vendor."""
+        raise NotImplementedError
+
     def read_order_number(self, page):
         return None
 

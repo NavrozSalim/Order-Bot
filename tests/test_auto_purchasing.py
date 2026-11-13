@@ -141,7 +141,7 @@ def test_next_job_asks_for_new_kinds(tmp_path):
     http = FetchHttp()
     agent(tmp_path, http, None).next_job()
     assert http.gets[0][1] == {"kinds": KINDS}
-    assert set(KINDS.split(",")) == {"run", "fetch_orders", "purchase"}
+    assert set(KINDS.split(",")) == {"run", "fetch_orders", "purchase", "lookup_order"}
 
 
 def test_fetch_uploads_file_then_completes_and_deletes_it(tmp_path):

@@ -186,3 +186,27 @@ def test_cart_that_will_not_empty_stops_the_line(tmp_path):
     row = sheet(out / "kogan-remaining.xlsx")[0]
     assert row["status"] == "failed" and "could not be emptied" in row["error"]
     assert "add" not in sess.pages[-1].clicks
+
+
+class LookupVendor(FakeVendor):
+    def find_order_number(self, page, line):
+        return "503-7159982-8255043" if line.order_id == "K1" else None
+
+
+def test_lookup_orders_buys_nothing_and_reports_numbers(tmp_path):
+    code, sess, out = run_au(tmp_path, [kogan_row("K1", "K-1"), kogan_row("K2", "K-2")],
+                             [("K-1", "amazon_au", AMZ, ""), ("K-2", "amazon_au", AMZ, "")],
+                             extra=["--lookup-orders", "--place"], vendor=LookupVendor)
+    assert code == 0
+    done = sheet(out / "kogan-done.xlsx")
+    rem = sheet(out / "kogan-remaining.xlsx")
+    assert [(r["order_id"], r["status"], r["vendor_order_number"]) for r in done] == [("K1", "order_found", "503-7159982-8255043")]
+    assert rem[0]["status"] == "order_not_found"
+    assert FakeVendor.submits == 0 and all("add" not in p.clicks for p in sess.pages)
+
+
+def test_agent_lookup_job_command(tmp_path):
+    from agent import build_command
+    cmd = build_command({"region": "au", "marketplace": "kogan", "account": "a", "place": True, "kind": "lookup_order"},
+                        "python", tmp_path)
+    assert "--lookup-orders" in cmd and "--place" not in cmd

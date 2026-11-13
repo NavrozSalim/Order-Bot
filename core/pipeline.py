@@ -21,6 +21,8 @@ def parse_args(region_key, argv=None):
     ap.add_argument("--mapping", required=True)
     ap.add_argument("--account", required=True, help="purchase-account name from accounts.json (selects the vendor)")
     ap.add_argument("--place", action="store_true", help="really place the order (default: stop before the final click)")
+    ap.add_argument("--lookup-orders", action="store_true",
+                    help="buy nothing: find each line's order number in the vendor's order list (Recheck order ID)")
     ap.add_argument("--accounts-file", default=str(ROOT / "accounts.json"))
     ap.add_argument("--output-dir", default=str(ROOT / "output"))
     return ap.parse_args(argv)
@@ -63,13 +65,39 @@ def _result(line, status, entry=None, stock="", number="", error="", shot=""):
                         entry.url if entry else "", stock, status, number, error, shot)
 
 
-def process_lines(lines, mapping, account, vendor, store, place, lazy):
+def process_lines(lines, mapping, account, vendor, store, place, lazy, lookup=False):
     for line in lines:
-        res = _process(line, mapping, account, vendor, store, place, lazy)
+        res = (_lookup(line, mapping, vendor, lazy) if lookup
+               else _process(line, mapping, account, vendor, store, place, lazy))
         store.record(res)
         store.flush(lines)
         log.info("order %s sku %s -> %s%s", line.order_id, line.sku, res.status,
                  f" ({res.error})" if res.error else "")
+
+
+def _lookup(line, mapping, vendor, lazy):
+    """Recheck order ID: open the product (for its title), then find the order in the vendor's order list."""
+    entry = mapping.get(sku_key(line.sku))
+    if entry is None:
+        return _result(line, R.UNMAPPED)
+    session = lazy.get()
+    page = session.new_page()
+    try:
+        vendor.open_product(page, entry.url)
+        number = vendor.find_order_number(page, line)
+        if number:
+            return _result(line, R.ORDER_FOUND, entry, number=number)
+        return _result(line, R.ORDER_NOT_FOUND, entry,
+                       error="no matching order (product title and customer name) in the vendor's order list")
+    except NotImplementedError:
+        return _result(line, R.ORDER_NOT_FOUND, entry, error=f"Recheck order ID is not available for {entry.vendor}")
+    except Exception as e:
+        return _result(line, R.ORDER_NOT_FOUND, entry, error=f"{type(e).__name__}: {e}"[:300])
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
 
 
 def _process(line, mapping, account, vendor, store, place, lazy):
@@ -162,12 +190,13 @@ def main(region_key, argv=None, *, session_factory=None, vendor_factory=None):
         from vendors import make_vendor as vendor_factory
     _setup_logging(store.log_path)
     log.info("%s run: %d lines, account %s (%s), %s", marketplace, len(lines), account.name, account.vendor,
-             "PLACE" if args.place else "dry-run")
+             "LOOKUP ORDER NUMBERS" if args.lookup_orders else "PLACE" if args.place else "dry-run")
     lazy = _LazySession(session_factory or BrowserSession, account)
     store.flush(lines)
     code = 0
     try:
-        process_lines(lines, mapping, account, vendor_factory(account), store, args.place, lazy)
+        process_lines(lines, mapping, account, vendor_factory(account), store, args.place and not args.lookup_orders,
+                      lazy, lookup=args.lookup_orders)
     except BrowserStartError as e:
         log.info("stopped: %s", e)
         code = 3

@@ -17,8 +17,11 @@ PRICE_CHANGED = "price_changed"   # vendor price above the mapping's Max Price: 
 READY = "ready_for_payment"
 PURCHASED = "purchased"
 FAILED = "failed"
+# --lookup-orders (Recheck order ID): the order number found in the vendor's order list, or not.
+ORDER_FOUND = "order_found"
+ORDER_NOT_FOUND = "order_not_found"
 
-DONE_STATUSES = (PURCHASED, READY)
+DONE_STATUSES = (PURCHASED, READY, ORDER_FOUND)
 
 
 @dataclass
