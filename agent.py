@@ -32,6 +32,20 @@ def load_config(path=ROOT / "agent.json"):
     return cfg
 
 
+def _kill_tree(proc):
+    """Stop the bot and the Chrome it started (Windows: the whole process tree)."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            proc.terminate()
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
 def build_command(job, python, workdir):
     cmd = [python, SCRIPTS[job["region"]], "--marketplace", job["marketplace"],
            "--orders", str(workdir / "orders.xlsx"), "--mapping", str(workdir / "mapping.xlsx"),
@@ -146,7 +160,7 @@ class Agent:
             with open(stdout_path, "w", encoding="utf-8") as so:
                 proc = self.popen(cmd, cwd=str(self.root), stdout=so, stderr=subprocess.STDOUT,
                                   env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-                last = 0.0
+                last = last_cancel = 0.0
                 while proc.poll() is None:
                     self.sleep(self.cfg.get("tick_seconds", 5))
                     if time.monotonic() - last >= self.cfg["progress_seconds"]:
@@ -155,8 +169,12 @@ class Agent:
                             self._post(job["progress_url"], {}, out)
                         except Exception:
                             pass
+                    # Stop pressed on the Orders page: kill the bot within a few seconds.
+                    if time.monotonic() - last_cancel >= self.cfg.get("cancel_seconds", 5):
+                        last_cancel = time.monotonic()
                         if self._cancelled(job):
-                            proc.terminate()
+                            print(f"run {job['job_id']}: stopped from the web app")
+                            _kill_tree(proc)
                             break
                 code = proc.wait()
         except Exception as e:
