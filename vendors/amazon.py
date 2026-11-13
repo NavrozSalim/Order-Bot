@@ -2,7 +2,7 @@
 import re
 
 from core.address import split_name
-from .base import (goto, click_loc, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
+from .base import (goto, click_loc, scroll_to, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
                    click_required, fill_field,
                    address_keys, find_required, first_visible, page_buttons, settle)
 
@@ -58,8 +58,7 @@ class Amazon(Vendor):
                 loc.select_option(value=line.country, timeout=2500)
             except Exception:
                 raise VendorError("could not set country") from None
-        click_required(page, USE_ADDRESS, "Use this address")
-        settle(page, 2000)
+        self.save_new_address(page)
         if re.search(r"did you mean|suggested address|verify your address", body_text(page), re.I):
             # Amazon suggests a corrected address: keep exactly what the customer entered.
             if not click_optional(page, KEEP_ENTERED_ADDRESS, 4000):
@@ -67,9 +66,15 @@ class Amazon(Vendor):
             settle(page, 2000)
         # Back on the list of saved addresses: tick the customer's one before "Deliver to this address".
         if first_visible(page, _btn("Deliver to this address"), 3000) is not None:
-            if not self.select_customer_address(page, line):
+            picked = False
+            for _ in range(8):  # the new address can take a moment to show in the list
+                picked = self.select_customer_address(page, line)
+                if picked:
+                    break
+                page.wait_for_timeout(1500)
+            if not picked:
                 raise VendorError("the customer's address is not in Amazon's address list after "
-                                  "'Use this address'; not ordered; " + page_buttons(page))
+                                  "'Use this address'; not ordered; list shows: " + _address_list(page))
             click_optional(page, _btn("Deliver to this address") + ["a:has-text('Deliver to this address')"], 4000)
         click_optional(page, ["input[name*='SetPaymentPlanSelectContinueEvent']"] + _btn("Use this payment method"), 4000)
         click_optional(page, _btn("Continue"), 3000)
@@ -101,6 +106,27 @@ class Amazon(Vendor):
             break
         if first_visible(page, [ADDRESS_NAME_FIELD], 5000) is None:
             raise VendorError("new delivery address form not reached; " + _where(page))
+
+    def save_new_address(self, page):
+        """Click "Use this address" at the bottom of the "Add an address" window until the window closes.
+
+        The button is scrolled into view inside the window first. Up to 3 tries; Amazon's messages in the
+        window (missing field, invalid postcode) are reported when it stays open.
+        """
+        for _ in range(3):
+            btn = find_required(page, USE_ADDRESS)
+            if btn is None:
+                raise VendorError("could not find: Use this address; " + page_buttons(page))
+            scroll_to(btn)
+            click_loc(page, btn)
+            for _ in range(15):
+                if first_visible(page, [ADDRESS_NAME_FIELD], 300) is None:
+                    settle(page, 1500)
+                    return
+                page.wait_for_timeout(1000)
+        problems = _form_alerts(page)
+        raise VendorError("'Use this address' did not save the address"
+                          + (f"; Amazon says: {problems}" if problems else "") + "; " + _form_fields(page))
 
     @staticmethod
     def select_customer_address(page, line):
@@ -295,3 +321,29 @@ _SELECT_ADDRESS_JS = r"""(keys) => {
   }
   return false;
 }"""
+
+
+_ALERTS_JS = r"""() => [...document.querySelectorAll('.a-alert-content, .a-form-error, [role=alert]')]
+  .filter(e => e.offsetParent).map(e => e.innerText.trim()).filter(Boolean).slice(0, 4)"""
+
+_LIST_JS = r"""() => [...document.querySelectorAll('input[type=radio]')].slice(0, 6).map(r => {
+  let row = r;
+  for (let i = 0; i < 6 && row.parentElement && row.parentElement.querySelectorAll('input[type=radio]').length === 1; i++)
+    row = row.parentElement;
+  return (r.checked ? '[x] ' : '[ ] ') + row.innerText.trim().replace(/\s+/g, ' ').slice(0, 90);
+})"""
+
+
+def _form_alerts(page):
+    try:
+        return " / ".join(page.evaluate(_ALERTS_JS) or [])[:300]
+    except Exception:
+        return ""
+
+
+def _address_list(page):
+    try:
+        rows = page.evaluate(_LIST_JS) or []
+    except Exception:
+        rows = []
+    return (" | ".join(rows) or "no addresses found")[:600]

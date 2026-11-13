@@ -194,11 +194,14 @@ AMZ_CHECKOUT = """<html><body><h1>Secure checkout</h1>
 <div id="shipaddress">Delivering to Navroz, 1 Home Road, PARRAMATTA NSW 2150 <a id="addressChangeLinkId" href="#"
  onclick="document.getElementById('list').style.display='block';return false">Change</a></div>
 <div id="list" style="display:none"><a id="add-new-address-popover-link" href="#"
- onclick="document.getElementById('pop-modal').style.display='block';return false">Add a new delivery address</a></div>
+ onclick="document.getElementById('pop-modal').style.display='block';document.getElementById('backdrop').style.display='block';return false">Add a new delivery address</a></div>
 <input type="radio" name="sel" checked> Greg Hearne, UNIT 151 NEWPORT VILLAGE 1A LINCOLN ROAD, PORT MACQUARIE, NSW, 2444
 """ + a_btn("deliverHere", "Deliver to this address",
             "location.href='/checkout/p/review?n=Greg%20Hearne&s=1A%20Lincoln%20Road&c=PORT%20MACQUARIE&p=2444'") + """
-<div class="a-popover a-popover-modal" role="dialog" id="pop-modal" style="display:none;position:fixed;inset:5%;background:#fff">
+<div id="backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:5" onclick="closeForm()"></div>
+<div style="height:3000px">page behind the window</div>
+<div class="a-popover a-popover-modal" role="dialog" id="pop-modal"
+     style="display:none;position:fixed;top:5%;left:20%;width:60%;height:80%;overflow-y:auto;background:#fff;z-index:10">
 <header>Add an address <button class="a-button-close a-declarative" aria-label="Close" onclick="closeForm()">x</button></header>
 <form id="form" onsubmit="return false">
 <select id="address-ui-widgets-countryCode-dropdown-nativeId"><option value="AU" selected>Australia</option>
@@ -211,10 +214,12 @@ AMZ_CHECKOUT = """<html><body><h1>Secure checkout</h1>
  <span tabindex="-1" aria-hidden="true" id="address-ui-widgets-enterAddressCity" class="a-button a-button-dropdown">
  <span class="a-button-inner"><span class="a-button-text a-dropdown-prompt" onclick="openList()">Select</span></span></span></span>
 <div class="a-popover" id="pop" style="display:none"><ul id="sub"></ul></div>
+<div style="height:1400px">Make this my default address. Delivery instructions (optional)</div>
 <span id="useWrap" style="display:none">""" + a_btn("address-ui-widgets-form-submit-button", "Use this address", "useAddr()") + """</span>
 </form></div>
 <script>
-function closeForm(){ document.getElementById('form').reset(); document.getElementById('pop-modal').style.display='none'; }
+function closeForm(){ document.getElementById('form').reset(); document.getElementById('pop-modal').style.display='none';
+  document.getElementById('backdrop').style.display='none'; }
 function loadSuburbs(v){ if (v.length < 4) return;
   setTimeout(() => { document.getElementById('useWrap').style.display='inline'; }, 1500);
   setTimeout(() => {
@@ -303,7 +308,8 @@ AMZ_CHECKOUT_LIST = AMZ_CHECKOUT.replace(
     "const row = document.createElement('div'); row.className = 'address-row';"
     "row.innerHTML = '<input type=radio name=sel data-q=\"' + q.toString() + '\"> ' + g('enterAddressFullName') + ' '"
     " + g('enterAddressLine1').toUpperCase() + ', ' + city + ', SA, ' + g('enterAddressPostalCode') + ', Australia';"
-    "document.getElementById('rows').appendChild(row); document.getElementById('pop-modal').style.display='none';")
+    "document.getElementById('rows').appendChild(row); document.getElementById('pop-modal').style.display='none';"
+    "document.getElementById('backdrop').style.display='none';")
 
 
 def test_amazon_address_list_after_use_this_address_ticks_customer(page):

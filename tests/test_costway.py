@@ -112,6 +112,8 @@ class FlakyLoc:
             raise TimeoutError("covered by a popup")
 
     def evaluate(self, script):
+        if "scrollIntoView" in script:
+            return None
         if not self.js_ok:
             raise RuntimeError("gone")
         self.js += 1

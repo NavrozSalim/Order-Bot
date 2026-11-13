@@ -116,6 +116,7 @@ def click_loc(page, loc, tries=CLICK_TRIES):
     last = None
     url_before = getattr(page, "url", None)
     for attempt in range(tries):
+        scroll_to(loc)
         try:
             loc.scroll_into_view_if_needed(timeout=3000)
         except Exception:
@@ -154,6 +155,39 @@ def click_optional(page, selectors, timeout=2000):
     return True
 
 
+# Scroll where the user is looking: inside the open pop-up window (Amazon's "Add an address"),
+# else the page. The mouse wheel would scroll whatever is under the mouse - often the page behind.
+_SCROLL_JS = r"""(dy) => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const dialogs = [...document.querySelectorAll('[role=dialog], .a-popover-modal, .a-modal-scroller, [class*=modal i]')]
+    .filter(vis);
+  const dlg = dialogs[dialogs.length - 1];
+  if (dlg) {
+    const boxes = [dlg, ...dlg.querySelectorAll('*')].filter(e =>
+      e.scrollHeight > e.clientHeight + 5 && /(auto|scroll)/.test(getComputedStyle(e).overflowY));
+    if (boxes.length) { boxes[0].scrollTop += dy; return 'dialog'; }
+  }
+  window.scrollBy(0, dy);
+  return 'page';
+}"""
+
+
+def scroll_down(page, dy=400):
+    try:
+        return page.evaluate(_SCROLL_JS, dy)
+    except Exception:
+        return None
+
+
+def scroll_to(loc):
+    """Bring an element to the middle of its own scroll box (a pop-up window or the page)."""
+    try:
+        loc.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
+    except Exception:
+        pass
+
+
 def find_required(page, selectors, tries=FIND_TRIES, timeout=FIND_WAIT_MS):
     """Look for a required button / field 3 times: wait, close popups, scroll, look again."""
     for attempt in range(tries):
@@ -164,10 +198,7 @@ def find_required(page, selectors, tries=FIND_TRIES, timeout=FIND_WAIT_MS):
             page.evaluate(_DISMISS_POPUPS_JS)
         except Exception:
             pass
-        try:
-            page.mouse.wheel(0, 400)
-        except Exception:
-            pass
+        scroll_down(page)
         settle(page, 2000)
     return None
 
