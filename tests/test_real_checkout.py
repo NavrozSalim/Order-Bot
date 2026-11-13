@@ -204,7 +204,8 @@ AMZ_CHECKOUT = """<html><body><h1>Secure checkout</h1>
      style="display:none;position:fixed;top:5%;left:20%;width:60%;height:80%;overflow-y:auto;background:#fff;z-index:10">
 <header>Add an address <button class="a-button-close a-declarative" aria-label="Close" onclick="closeForm()">x</button></header>
 <form id="form" onsubmit="return false">
-<select id="address-ui-widgets-countryCode-dropdown-nativeId"><option value="AU" selected>Australia</option>
+<div class="a-alert-content" id="alert" style="display:none"></div>
+<select id="address-ui-widgets-countryCode-dropdown-nativeId" onchange="redraw()"><option value="AU" selected>Australia</option>
  <option value="US">United States</option><option value="GB">United Kingdom</option><option value="DE">Deutschland</option></select>
 <input id="address-ui-widgets-enterAddressFullName"><input id="address-ui-widgets-enterAddressPhoneNumber">
 <input id="address-ui-widgets-enterAddressLine1"><input id="address-ui-widgets-enterAddressLine2">
@@ -231,7 +232,14 @@ function openList(){ document.getElementById('pop').style.display='block'; }
 function pick(v){ document.getElementById('address-ui-widgets-enterAddressCity-dropdown-nativeId').value = v;
   document.getElementById('pop').style.display='none'; document.querySelector('.a-dropdown-prompt').innerText = v; }
 function g(i){ return document.getElementById('address-ui-widgets-'+i).value; }
+function redraw(){  // like Amazon: choosing a country draws the form again, empty
+  document.querySelectorAll('#form input').forEach(i => { i.value = ''; });
+  document.getElementById('address-ui-widgets-enterAddressCity-dropdown-nativeId').value = ''; }
 function useAddr(){
+  const missing = [];
+  if (!g('enterAddressFullName')) missing.push('Please enter a name.');
+  if (!g('enterAddressPhoneNumber')) missing.push('Please enter a phone number so we can call if there are any issues with delivery.');
+  if (missing.length) { const a = document.getElementById('alert'); a.innerText = missing.join(' '); a.style.display = 'block'; return; }
   const city = document.getElementById('address-ui-widgets-enterAddressCity-dropdown-nativeId').value;
   if (!city) { alert('pick a suburb'); return; }
   const q = new URLSearchParams({n: g('enterAddressFullName'), s: g('enterAddressLine1'), c: city, p: g('enterAddressPostalCode')});

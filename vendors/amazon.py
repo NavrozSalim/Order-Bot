@@ -34,7 +34,8 @@ class Amazon(Vendor):
                               "a:has-text('Proceed to checkout')"], "Proceed to checkout")
         self.guard(page)
         self.open_new_address_form(page)
-        p = "#address-ui-widgets-"
+        # Country first and only when it differs: choosing a country redraws the form and clears it.
+        self.set_country(page, line)
         fill_field(page, _inp("enterAddressFullName"), line.ship_name, "full name")
         fill_field(page, _inp("enterAddressPhoneNumber"), line.phone, "phone")
         fill_field(page, _inp("enterAddressLine1"), line.address1, "address 1")
@@ -46,18 +47,14 @@ class Amazon(Vendor):
             type_into(page, loc, line.postcode)
             settle(page, 2500)  # Amazon loads the suburbs for the postcode
         self.set_suburb(page, line)
-        try:
-            choose_state(page, STATE_FIELDS, line)
-        except VendorError:
-            pass  # Amazon AU sets the state from postcode + suburb; the review page is checked later
+        if not _value(page, STATE_FIELDS):  # Amazon AU sets the state from postcode + suburb
+            try:
+                choose_state(page, STATE_FIELDS, line)
+            except VendorError:
+                pass  # the review page is checked later
         if loc is None:
             fill_field(page, _inp("enterAddressPostalCode"), line.postcode, "postcode")
-        loc = first_visible(page, [p + "countryCode-dropdown-nativeId"], 1500)
-        if loc is not None:
-            try:
-                loc.select_option(value=line.country, timeout=2500)
-            except Exception:
-                raise VendorError("could not set country") from None
+        self.refill_cleared(page, line)
         self.save_new_address(page)
         if re.search(r"did you mean|suggested address|verify your address", body_text(page), re.I):
             # Amazon suggests a corrected address: keep exactly what the customer entered.
@@ -106,6 +103,29 @@ class Amazon(Vendor):
             break
         if first_visible(page, [ADDRESS_NAME_FIELD], 5000) is None:
             raise VendorError("new delivery address form not reached; " + _where(page))
+
+    @staticmethod
+    def set_country(page, line):
+        loc = first_visible(page, COUNTRY_FIELDS, 1500)
+        if loc is None:
+            return
+        try:
+            if (loc.input_value() or "").upper() == (line.country or "").upper():
+                return
+            loc.select_option(value=line.country, timeout=2500)
+        except Exception:
+            raise VendorError("could not set country") from None
+        settle(page, 2500)  # the form is drawn again for the country
+
+    @staticmethod
+    def refill_cleared(page, line):
+        """Right before "Use this address": type again any field that is empty (a redraw can clear it)."""
+        for name, value, what in (("enterAddressFullName", line.ship_name, "full name"),
+                                  ("enterAddressPhoneNumber", line.phone, "phone"),
+                                  ("enterAddressLine1", line.address1, "address 1"),
+                                  ("enterAddressPostalCode", line.postcode, "postcode")):
+            if value and not _value(page, _inp(name)):
+                fill_field(page, _inp(name), value, what)
 
     def save_new_address(self, page):
         """Click "Use this address" at the bottom of the "Add an address" window until the window closes.
@@ -347,3 +367,18 @@ def _address_list(page):
     except Exception:
         rows = []
     return (" | ".join(rows) or "no addresses found")[:600]
+
+
+COUNTRY_FIELDS = [f"select#{_P}countryCode-dropdown-nativeId", f"select[name='{_P}countryCode']", f"select#{_P}countryCode"]
+
+
+def _value(page, selectors):
+    """Current value of the first visible field (or hidden select) among ``selectors``; '' when none."""
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count():
+                return (loc.input_value(timeout=1500) or "").strip()
+        except Exception:
+            continue
+    return ""
