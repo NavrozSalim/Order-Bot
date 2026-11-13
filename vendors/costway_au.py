@@ -67,7 +67,7 @@ class CostwayAU(Vendor):
             self._variant = "oos"
             return
         if "selected" not in cls:
-            sw.click()
+            click_loc(page, sw)
             settle(page)
             cls = (sw.get_attribute("class") or "").split()
             if "selected" not in cls:

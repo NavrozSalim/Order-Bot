@@ -173,10 +173,38 @@ def find_required(page, selectors, tries=FIND_TRIES, timeout=FIND_WAIT_MS):
     return None
 
 
+_BUTTONS_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const out = [];
+  for (const e of document.querySelectorAll('button, input[type=submit], input[type=button], a.a-button-text, span.a-button-text, [role=button]')) {
+    if (!vis(e)) continue;
+    let t = (e.innerText || e.value || e.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ');
+    if (!t && e.getAttribute('aria-labelledby')) {
+      const l = document.getElementById(e.getAttribute('aria-labelledby').split(' ')[0]);
+      t = l ? l.innerText.trim() : '';
+    }
+    if (!t || t.length > 40) continue;
+    out.push(t + (e.id ? ' #' + e.id : ''));
+  }
+  return [...new Set(out)].slice(0, 20);
+}"""
+
+
+def page_buttons(page):
+    """'buttons on the page: Use this address #..., Edit, ...' for error messages."""
+    try:
+        btns = page.evaluate(_BUTTONS_JS) or []
+    except Exception:
+        btns = []
+    url = (getattr(page, "url", "") or "").split("?")[0]
+    return (f"page {url}; buttons on the page: " + (", ".join(btns) or "none"))[:700]
+
+
 def click_required(page, selectors, what, timeout=4000):
     loc = find_required(page, selectors, timeout=max(timeout, FIND_WAIT_MS))
     if loc is None:
-        raise VendorError(f"could not find: {what} (looked {FIND_TRIES} times)")
+        raise VendorError(f"could not find: {what} (looked {FIND_TRIES} times); {page_buttons(page)}")
     click_loc(page, loc)
     settle(page)
 

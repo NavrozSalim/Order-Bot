@@ -4,7 +4,7 @@ import re
 from core.address import split_name
 from .base import (goto, click_loc, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
                    click_required, fill_field,
-                   first_visible, settle)
+                   find_required, first_visible, page_buttons, settle)
 
 
 class Amazon(Vendor):
@@ -18,8 +18,9 @@ class Amazon(Vendor):
     add_selectors = ["#add-to-cart-button", "input[name='submit.add-to-cart']"]
     cart_remove = ["input[value='Delete']", "span[data-action='delete'] input", "input[data-action='delete']"]
     order_re = re.compile(r"\b\d{3}-\d{7}-\d{7}\b")
-    place_selectors = ["input[name='placeYourOrder1']", "#placeOrder", "#submitOrderButtonId input",
-                       "#bottomSubmitOrderButtonId input"]
+    place_selectors = ["input[name='placeYourOrder1']", "#placeOrder input", "#placeOrder", "#submitOrderButtonId input",
+                       "#bottomSubmitOrderButtonId input", "span.a-button:has-text('Place your order') input.a-button-input",
+                       "input[aria-labelledby*='placeOrder' i]", "button:text-is('Place your order')"]
 
     @property
     def cart_url(self):
@@ -57,17 +58,19 @@ class Amazon(Vendor):
                 loc.select_option(value=line.country, timeout=2500)
             except Exception:
                 raise VendorError("could not set country") from None
-        click_required(page, ["input[aria-labelledby*='address-ui-widgets-form-submit-button']",
-                              "#address-ui-widgets-form-submit-button input", "input[type=submit]:has-text('Use')"],
-                       "Use this address")
+        click_required(page, USE_ADDRESS, "Use this address")
+        settle(page, 2000)
         if re.search(r"did you mean|suggested address|verify your address", body_text(page), re.I):
-            raise VendorError("address verification widget needs a human; not confirmed")
-        click_optional(page, ["a:has-text('Deliver to this address')", "input[value*='Deliver to this address']"])
-        click_optional(page, ["input[name*='SetPaymentPlanSelectContinueEvent']", "input[value='Use this payment method']"])
-        click_optional(page, ["input[value='Continue']", "span:has-text('Continue') input"])
+            # Amazon suggests a corrected address: keep exactly what the customer entered.
+            if not click_optional(page, KEEP_ENTERED_ADDRESS, 4000):
+                raise VendorError("Amazon suggested a different address; not confirmed; " + page_buttons(page))
+            settle(page, 2000)
+        click_optional(page, _btn("Deliver to this address") + ["a:has-text('Deliver to this address')"], 4000)
+        click_optional(page, ["input[name*='SetPaymentPlanSelectContinueEvent']"] + _btn("Use this payment method"), 4000)
+        click_optional(page, _btn("Continue"), 3000)
         self.guard(page)
-        if first_visible(page, self.place_selectors, 4000) is None:
-            raise VendorError("review page with place-order button not reached")
+        if find_required(page, self.place_selectors) is None:
+            raise VendorError("review page with 'Place your order' not reached; " + page_buttons(page))
         self.confirm_address_shown(page, line)
 
     def open_new_address_form(self, page):
@@ -239,3 +242,19 @@ def _form_fields(page):
         return "address form fields: " + ", ".join(page.evaluate(_FORM_FIELDS_JS) or [])
     except Exception:
         return _where(page)
+
+
+def _btn(text):
+    """An Amazon button by its text: the clickable <input> sits on top of the text <span>."""
+    t = text.replace("'", "")
+    return [f"span.a-button:has(span.a-button-text:text-is('{t}')) input.a-button-input",
+            f"span.a-button:has-text('{t}') input.a-button-input", f"input[type=submit][value='{t}']",
+            f"button:text-is('{t}')", f"a.a-button-text:text-is('{t}')", f"[role=button]:text-is('{t}')",
+            f"span.a-button-text:text-is('{t}')"]
+
+
+USE_ADDRESS = ["#address-ui-widgets-form-submit-button input.a-button-input",
+               "input[aria-labelledby*='address-ui-widgets-form-submit-button']",
+               "#checkout-primary-continue-button-id input", "input[data-testid='bottom-continue-button']"] + _btn("Use this address")
+KEEP_ENTERED_ADDRESS = (["#address-ui-widgets-original-address-block_id input", "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']"]
+                        + _btn("Use this address") + _btn("Save address") + _btn("Use address as entered"))
