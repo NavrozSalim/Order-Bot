@@ -524,11 +524,19 @@ class Vendor:
 
         Case, punctuation, line breaks and street-type spelling (Grove / Gr / Grv) do not matter.
         """
-        text = " " + _norm(body_text(page)) + " "
-        missing = [label for label, part in address_keys(line) if f" {part} " not in text]
-        if missing:
-            raise VendorError("address not confirmed on the checkout page (missing " + ", ".join(missing)
-                              + "); page shows: " + _address_snippet(text, line))
+        keys = address_keys(line)
+        text, missing = "", [label for label, _ in keys]
+        for _ in range(ADDRESS_WAIT_SECONDS // 2):  # the address section loads after the order button
+            text = " " + _norm(full_page_text(page)) + " "
+            missing = [label for label, part in keys if f" {part} " not in text]
+            if not missing:
+                return
+            try:
+                page.wait_for_timeout(2000)
+            except Exception:
+                break
+        raise VendorError("address not confirmed on the checkout page (missing " + ", ".join(missing)
+                          + "); page shows: " + _address_snippet(text, line))
 
 
 _STREET_TYPES = {"STREET", "ST", "ROAD", "RD", "AVENUE", "AVE", "AV", "GROVE", "GR", "GRV", "DRIVE", "DR", "COURT", "CT",
@@ -554,9 +562,44 @@ def address_keys(line):
     return keys
 
 
+ADDRESS_WAIT_SECONDS = 20
+
+# Text of the page including open shadow roots (custom elements) and same-site frames.
+_FULL_TEXT_JS = r"""() => {
+  const out = [];
+  const walk = root => {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) { out.push([...el.shadowRoot.children].map(c => c.innerText || c.textContent || '').join(' ')); walk(el.shadowRoot); }
+    }
+  };
+  out.push(document.body ? document.body.innerText : '');
+  walk(document);
+  for (const f of document.querySelectorAll('iframe')) {
+    try { out.push(f.contentDocument.body.innerText); } catch (e) {}
+  }
+  return out.join(' ');
+}"""
+
+
+def full_page_text(page):
+    parts = []
+    try:
+        parts.append(page.evaluate(_FULL_TEXT_JS) or "")
+    except Exception:
+        parts.append(body_text(page))
+    for frame in getattr(page, "frames", [])[1:]:
+        try:
+            parts.append(frame.inner_text("body", timeout=2000))
+        except Exception:
+            continue
+    return " ".join(parts)
+
+
 def _address_snippet(text, line):
-    """The page text around the postcode (or the start of the page) for the error message."""
+    """The page text around the postcode, else around "deliver", else the start of the page."""
     pc = _norm(line.postcode)
     i = text.find(f" {pc} ") if pc else -1
+    if i < 0:
+        i = text.find(" DELIVER")
     start = max(0, i - 120) if i >= 0 else 0
-    return text[start:start + 200].strip()
+    return text[start:start + 260].strip()

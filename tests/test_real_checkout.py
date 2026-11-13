@@ -255,3 +255,26 @@ def test_amazon_review_with_wrong_address_is_not_ordered(page):
     v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
     with pytest.raises(base.VendorError, match="address not confirmed"):
         v.fill_shipping(page, AmzLine())
+
+
+LATE_SHADOW_REVIEW = """<html><body><h1>Secure checkout</h1>""" + a_btn("placeOrder", "Place your order", "") + """
+<delivery-address id="d"></delivery-address>
+<script>setTimeout(() => { const r = document.getElementById('d').attachShadow({mode: 'open'});
+  r.innerHTML = '<div>Delivering to Ange N<br>65 Somerset Grove, CRAIGMORE, SA, 5114, Australia</div>'; }, 3000);</script>
+</body></html>"""
+
+IFRAME_REVIEW = """<html><body><h1>Secure checkout</h1>""" + a_btn("placeOrder", "Place your order", "") + """
+<iframe srcdoc="<div>Delivering to Ange N, 65 Somerset Grv, Craigmore SA 5114</div>"></iframe></body></html>"""
+
+
+@pytest.mark.parametrize("html", [LATE_SHADOW_REVIEW, IFRAME_REVIEW])
+def test_address_found_when_late_in_shadow_dom_or_frame(page, html):
+    page.set_content(html)
+    AmazonAU(Account("a", "amazon_au", "au", "Default")).confirm_address_shown(page, AmzLine())
+
+
+def test_review_without_customer_address_is_not_ordered(page, monkeypatch):
+    monkeypatch.setattr(base, "ADDRESS_WAIT_SECONDS", 4)
+    page.set_content(LATE_SHADOW_REVIEW.replace("65 Somerset Grove, CRAIGMORE, SA, 5114", "1 Home Road, PARRAMATTA NSW 2150"))
+    with pytest.raises(base.VendorError, match="missing postcode, house number, street name"):
+        AmazonAU(Account("a", "amazon_au", "au", "Default")).confirm_address_shown(page, AmzLine())
