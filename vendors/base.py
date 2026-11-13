@@ -111,7 +111,7 @@ CLICK_TRIES = 3
 
 
 def click_loc(page, loc, tries=CLICK_TRIES):
-    """Click with 3 tries. Between tries: close popups, press Escape, scroll to the element, wait 2 s.
+    """Click with 3 tries. Between tries: close marketing popups, scroll to the element, wait 2 s.
     Last resort: click it from the page's own script (gets past an overlay covering the button)."""
     last = None
     url_before = getattr(page, "url", None)
@@ -133,8 +133,7 @@ def click_loc(page, loc, tries=CLICK_TRIES):
         if url_before is not None and getattr(page, "url", None) not in (None, url_before):
             return  # the click went through: the page moved on and the button is gone
         try:
-            page.evaluate(_DISMISS_POPUPS_JS)
-            page.keyboard.press("Escape")
+            page.evaluate(_DISMISS_POPUPS_JS)  # no Escape key: it closes forms like Amazon's address popover
             page.wait_for_timeout(2000)
         except Exception:
             pass
@@ -291,14 +290,22 @@ _AVAILABILITY_RE = re.compile(r'"availability"\s*:\s*"(?:https?://schema\.org/)?
 _DISMISS_POPUPS_JS = r"""() => {
   const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
-  const words = /subscribe|newsletter|coupon|sign up for|% off|\$\d+ off|select your (country|region|location)|choose your (country|region|location)|change (country|region)|ship to|stay on|go to .* site|united states|deutschland|united kingdom/i;
+  // Marketing / site-switch wording only. Country names are NOT used: address forms list countries.
+  const words = /subscribe|newsletter|coupon|sign up for|% off|\$\d+ off|select your (country|region|location)|choose your (country|region|location)|change (country|region)|stay on|go to .* site/i;
+  // A window you type an address or details into is never closed (Amazon's "Add an address" is a popover).
+  const formField = 'input[id*=address i], input[name*=address i], input[id*=postal i], input[name*=postcode i], '
+    + 'input[name^=street], input[name=telephone], input[type=tel], select[id*=address i], select[name*=country i], '
+    + 'select[id*=country i], textarea';
+  const typing = el => el.querySelector(formField) ||
+    [...el.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]), select')]
+      .filter(vis).length >= 2;
   const skip = /checkout|address|shipping|payment|minicart|cart/i;
   let n = 0;
   const done = new Set();
   const boxes = document.querySelectorAll('[class*=modal i],[class*=popup i],[class*=dialog i],[role=dialog],[id*=modal i],[id*=popup i]');
   for (const el of boxes) {
     if (!vis(el) || skip.test(String(el.className) + ' ' + el.id)) continue;
-    if (el.querySelector('input[name^=street], input[name=postcode], input[name=telephone]')) continue;
+    if (typing(el)) continue;
     if (!words.test(el.innerText || '')) continue;
     const c = [...el.querySelectorAll('[class*=close i],[aria-label*=close i],[data-role=closeBtn],.gtm-pop-x,[class*=dismiss i]')]
       .find(x => vis(x) && x.getBoundingClientRect().width < 80);

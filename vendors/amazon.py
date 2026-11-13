@@ -116,7 +116,7 @@ class Amazon(Vendor):
                         click_loc(page, opt)
                         settle(page, 1000)
                         return
-                    page.keyboard.press("Escape")
+                    click_loc(page, prompt)  # close the list again (not Escape: it closes the address form)
                 except Exception:
                     pass
             try:
