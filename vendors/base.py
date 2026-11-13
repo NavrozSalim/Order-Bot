@@ -3,6 +3,7 @@
 The bot never solves captchas or 2FA. When one shows up the line fails and the run goes on.
 Selectors in the vendor modules are best-effort starting points and need a supervised dry-run per vendor.
 """
+import random
 import re
 
 from core.address import AU_STATES, VALID_STATE_CODES, is_po_box, state_name
@@ -31,12 +32,34 @@ CHALLENGES = [
 LOGIN_URL_PARTS = ["/ap/signin", "signin.ebay", "/signin", "/sign-in", "/login", "/account/login"]
 
 
+# Human pace: pages finish loading, then a short random pause; typing is key by key.
+PAUSE_MIN_MS, PAUSE_MAX_MS = 700, 1600
+TYPE_DELAY_MS = (50, 130)
+FIND_TRIES = 3          # a required button / field is looked for 3 times
+FIND_WAIT_MS = 10000    # each look waits up to 10 s
+
+
+def pause(page, lo=PAUSE_MIN_MS, hi=PAUSE_MAX_MS):
+    try:
+        page.wait_for_timeout(random.randint(lo, hi))
+    except Exception:
+        pass
+
+
 def settle(page, ms=800):
     try:
         page.wait_for_load_state("domcontentloaded")
+    except Exception:
+        pass
+    try:
+        page.wait_for_load_state("load", timeout=15000)  # images and scripts, like a person waiting for the page
+    except Exception:
+        pass
+    try:
         page.wait_for_timeout(ms)
     except Exception:
         pass
+    pause(page)
 
 
 NAV_TIMEOUT_MS = 60000
@@ -98,6 +121,11 @@ def click_loc(page, loc, tries=CLICK_TRIES):
         except Exception:
             pass
         try:
+            loc.hover(timeout=3000)
+        except Exception:
+            pass
+        pause(page, 400, 1100)
+        try:
             loc.click(timeout=10000)
             return
         except Exception as e:
@@ -127,24 +155,66 @@ def click_optional(page, selectors, timeout=2000):
     return True
 
 
+def find_required(page, selectors, tries=FIND_TRIES, timeout=FIND_WAIT_MS):
+    """Look for a required button / field 3 times: wait, close popups, scroll, look again."""
+    for attempt in range(tries):
+        loc = first_visible(page, selectors, timeout)
+        if loc is not None:
+            return loc
+        try:
+            page.evaluate(_DISMISS_POPUPS_JS)
+        except Exception:
+            pass
+        try:
+            page.mouse.wheel(0, 400)
+        except Exception:
+            pass
+        settle(page, 2000)
+    return None
+
+
 def click_required(page, selectors, what, timeout=4000):
-    if not click_optional(page, selectors, timeout):
-        raise VendorError(f"could not find: {what}")
+    loc = find_required(page, selectors, timeout=max(timeout, FIND_WAIT_MS))
+    if loc is None:
+        raise VendorError(f"could not find: {what} (looked {FIND_TRIES} times)")
+    click_loc(page, loc)
+    settle(page)
+
+
+def type_into(page, loc, value):
+    """Click the field, clear it and type the value key by key (falls back to fill)."""
+    value = str(value)
+    try:
+        loc.click(timeout=5000)
+    except Exception:
+        pass
+    pause(page, 200, 500)
+    try:
+        loc.fill("")
+        loc.press_sequentially(value, delay=random.randint(*TYPE_DELAY_MS))
+    except Exception:
+        loc.fill(value)
+    try:
+        if (loc.input_value() or "").strip() != value.strip():
+            loc.fill(value)  # autocomplete changed it: set it exactly
+    except Exception:
+        pass
+    pause(page, 300, 800)
 
 
 def fill_field(page, selectors, value, what, required=True):
     if value in ("", None) and not required:
         return
-    loc = first_visible(page, selectors)
+    loc = find_required(page, selectors) if required else first_visible(page, selectors)
     if loc is None:
         if required:
-            raise VendorError(f"field not found: {what}")
+            raise VendorError(f"field not found: {what} (looked {FIND_TRIES} times)")
         return
-    loc.fill(str(value))
+    type_into(page, loc, value)
 
 
 def choose_state(page, selectors, line):
-    loc = first_visible(page, selectors)
+    loc = find_required(page, selectors)
     if loc is None:
         raise VendorError("field not found: state")
     full = state_name(line.state_code, line.country)
