@@ -520,7 +520,43 @@ class Vendor:
 
     # ---- helpers ---------------------------------------------------------------------
     def confirm_address_shown(self, page, line):
-        text = body_text(page).upper()
-        street = line.address1.upper()[:14]
-        if line.postcode.upper() not in text or street not in text:
-            raise VendorError("address not confirmed on the checkout page")
+        """Before ordering: the page must show the customer's postcode, house number and street name.
+
+        Case, punctuation, line breaks and street-type spelling (Grove / Gr / Grv) do not matter.
+        """
+        text = " " + _norm(body_text(page)) + " "
+        missing = [label for label, part in address_keys(line) if f" {part} " not in text]
+        if missing:
+            raise VendorError("address not confirmed on the checkout page (missing " + ", ".join(missing)
+                              + "); page shows: " + _address_snippet(text, line))
+
+
+_STREET_TYPES = {"STREET", "ST", "ROAD", "RD", "AVENUE", "AVE", "AV", "GROVE", "GR", "GRV", "DRIVE", "DR", "COURT", "CT",
+                 "CRT", "PLACE", "PL", "LANE", "LN", "CRESCENT", "CRES", "CR", "CL", "CLOSE", "PARADE", "PDE", "TERRACE",
+                 "TCE", "HIGHWAY", "HWY", "BOULEVARD", "BLVD", "WAY", "CIRCUIT", "CCT", "UNIT", "APT", "LEVEL", "LVL",
+                 "SHOP", "SUITE", "NORTH", "SOUTH", "EAST", "WEST", "THE", "LOT", "PO", "BOX"}
+
+
+def _norm(text):
+    return " ".join(re.sub(r"[^A-Z0-9]+", " ", (text or "").upper()).split())
+
+
+def address_keys(line):
+    """(label, word) pairs that must appear on the order page: postcode, house number, street name."""
+    keys = [("postcode", _norm(line.postcode))] if _norm(line.postcode) else []
+    words = _norm(line.address1).split()
+    numbers = [w for w in words if re.fullmatch(r"\d+[A-Z]?", w)]
+    if numbers:
+        keys.append(("house number", numbers[-1]))  # "3/12 Foo St" -> 12; "Unit 3, 12 Foo St" -> 12
+    names = [w for w in words if w.isalpha() and len(w) > 1 and w not in _STREET_TYPES]
+    if names:
+        keys.append(("street name", names[0]))
+    return keys
+
+
+def _address_snippet(text, line):
+    """The page text around the postcode (or the start of the page) for the error message."""
+    pc = _norm(line.postcode)
+    i = text.find(f" {pc} ") if pc else -1
+    start = max(0, i - 120) if i >= 0 else 0
+    return text[start:start + 200].strip()
