@@ -2,7 +2,8 @@
 import re
 
 from core.address import split_name
-from .base import (goto, Vendor, VendorError, body_text, choose_state, click_optional, click_required, fill_field,
+from .base import (goto, click_loc, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
+                   click_required, fill_field,
                    first_visible, settle)
 
 
@@ -33,13 +34,24 @@ class Amazon(Vendor):
         self.guard(page)
         self.open_new_address_form(page)
         p = "#address-ui-widgets-"
-        fill_field(page, [p + "enterAddressFullName"], line.ship_name, "full name")
-        fill_field(page, [p + "enterAddressPhoneNumber"], line.phone, "phone")
-        fill_field(page, [p + "enterAddressLine1"], line.address1, "address 1")
-        fill_field(page, [p + "enterAddressLine2"], line.address2, "address 2", required=False)
-        fill_field(page, [p + "enterAddressCity"], line.city, "city")
-        choose_state(page, [p + "enterAddressStateOrRegion", p + "enterAddressStateOrRegion-dropdown-nativeId"], line)
-        fill_field(page, [p + "enterAddressPostalCode"], line.postcode, "postcode")
+        fill_field(page, _inp("enterAddressFullName"), line.ship_name, "full name")
+        fill_field(page, _inp("enterAddressPhoneNumber"), line.phone, "phone")
+        fill_field(page, _inp("enterAddressLine1"), line.address1, "address 1")
+        self.pick_suggestion(page, [line.address1[:10]])  # street autocomplete: keep what was typed if none
+        fill_field(page, _inp("enterAddressLine2"), line.address2, "address 2", required=False)
+        fill_field(page, _inp("enterAddressCity"), line.city, "suburb")
+        # Amazon AU suggests "SUBURB, STATE POSTCODE": picking the customer's fills state and postcode.
+        picked = self.pick_suggestion(page, [line.postcode, line.city])
+        try:
+            choose_state(page, STATE_FIELDS, line)
+        except VendorError:
+            if not picked:
+                raise
+        loc = first_visible(page, _inp("enterAddressPostalCode"), 3000)
+        if loc is not None:
+            type_into(page, loc, line.postcode)
+        elif not picked:
+            raise VendorError("field not found: postcode")
         loc = first_visible(page, [p + "countryCode-dropdown-nativeId"], 1500)
         if loc is not None:
             try:
@@ -83,6 +95,28 @@ class Amazon(Vendor):
         if first_visible(page, [ADDRESS_NAME_FIELD], 5000) is None:
             raise VendorError("new delivery address form not reached; " + _where(page))
 
+    @staticmethod
+    def pick_suggestion(page, must_contain):
+        """Click the open autocomplete suggestion that contains every text in ``must_contain``."""
+        sels = []
+        for box in ("[role=listbox] [role=option]", ".a-popover:visible li", "[class*='suggest' i] li",
+                    "[class*='autocomplete' i] li", "[id*='suggestion' i] li"):
+            sel = box
+            for t in must_contain:
+                t = (t or "").replace("'", "")
+                if t:
+                    sel += f":has-text('{t}')"
+            sels.append(sel)
+        opt = first_visible(page, sels, 2500)
+        if opt is None:
+            return False
+        try:
+            click_loc(page, opt)
+        except Exception:
+            return False
+        settle(page, 800)
+        return True
+
     def submit_order(self, page):
         click_required(page, self.place_selectors, "Place your order")
         settle(page, 2500)
@@ -120,3 +154,17 @@ def _where(page):
         btns = []
     url = (getattr(page, "url", "") or "").split("?")[0]
     return (f"page {url}" + ("; buttons: " + ", ".join(btns) if btns else ""))[:500]
+
+
+_P = "address-ui-widgets-"
+
+
+def _inp(name):
+    """Only the typing box of an Amazon address field (the same id can sit on a hidden label <span>)."""
+    i = _P + name
+    return [f"input#{i}", f"input[name='{i}']", f"textarea#{i}", f"#{i} input", f"input[id^='{i}']"]
+
+
+STATE_FIELDS = [f"select#{_P}enterAddressStateOrRegion-dropdown-nativeId", f"select[name='{_P}enterAddressStateOrRegion']",
+                f"select#{_P}enterAddressStateOrRegion", f"input#{_P}enterAddressStateOrRegion",
+                f"input[name='{_P}enterAddressStateOrRegion']"]

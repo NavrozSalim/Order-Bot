@@ -181,9 +181,34 @@ def click_required(page, selectors, what, timeout=4000):
     settle(page)
 
 
+def editable(page, loc):
+    """The box you can type into: ``loc`` itself, or the input inside / named by / right after a label."""
+    try:
+        tag = loc.evaluate("e => e.isContentEditable ? 'ce' : e.tagName.toLowerCase()")
+    except Exception:
+        return loc
+    if tag in ("input", "textarea", "select", "ce"):
+        return loc
+    def by_label_for():
+        target = loc.evaluate("e => e.getAttribute('for') || ''")
+        return page.locator(f"[id='{target}']").first if target else None
+
+    for find in (lambda: loc.locator("input:not([type=hidden]), textarea").first,
+                 by_label_for,
+                 lambda: loc.locator("xpath=following::input[not(@type='hidden')][1]").first):
+        try:
+            cand = find()
+            if cand.count() and cand.is_visible():
+                return cand
+        except Exception:
+            continue
+    return loc
+
+
 def type_into(page, loc, value):
     """Click the field, clear it and type the value key by key (falls back to fill)."""
     value = str(value)
+    loc = editable(page, loc)
     try:
         loc.click(timeout=5000)
     except Exception:

@@ -61,3 +61,37 @@ def test_no_way_to_the_address_form_fails(monkeypatch):
     v.guard = lambda p: None
     with pytest.raises(VendorError, match="new delivery address form not reached"):
         v.open_new_address_form(page)
+
+
+class Inner:
+    def __init__(self):
+        self.value = ""
+
+    def count(self):
+        return 1
+
+    def is_visible(self):
+        return True
+
+    @property
+    def first(self):
+        return self
+
+
+class SpanLoc:
+    """Amazon AU: the field id sits on a hidden <span>; the typing box is inside it."""
+
+    def __init__(self):
+        self.inner = Inner()
+
+    def evaluate(self, js):
+        return "span"
+
+    def locator(self, sel):
+        return self.inner
+
+
+def test_label_span_resolves_to_its_input():
+    from vendors.base import editable
+    span = SpanLoc()
+    assert editable(object(), span) is span.inner
