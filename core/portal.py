@@ -25,6 +25,7 @@ Step kinds: {"click": selector}, {"goto": url}, {"wait_for": selector}, {"wait_m
 import json
 from pathlib import Path
 
+from .attention import wait_for_human
 from .browser import ROOT, Account, BrowserSession
 
 LOGIN_URL_PARTS = ["/login", "/signin", "/sign-in", "/auth", "/account/login"]
@@ -169,9 +170,14 @@ def fetch_orders_file(marketplace, cfg, dest_dir, *, session_factory=BrowserSess
             page.wait_for_timeout(int(cfg.get("settle_ms", 1500)))
             if _signed_out(page, cfg):
                 print(f"[portal] looks signed out at {page.url}")
-                raise PortalError(f"Sign-in needed: sign in to the {label} seller portal in the "
-                                  f"'{cfg.get('chrome_profile') or cfg.get('user_data_dir')}' Chrome profile on "
-                                  f"this laptop, then click Fetch again.")
+                profile = cfg.get('chrome_profile') or cfg.get('user_data_dir')
+                if not wait_for_human(page, f"Sign-in needed for the {label} seller portal ('{profile}' profile)",
+                                      lambda: _signed_out(page, cfg)):
+                    raise PortalError(f"Sign-in needed: sign in to the {label} seller portal in the "
+                                      f"'{profile}' Chrome profile on this laptop, then click Fetch again.")
+                # Signed in: start again from the orders page.
+                page.goto(cfg["orders_url"], wait_until="domcontentloaded")
+                page.wait_for_timeout(int(cfg.get("settle_ms", 1500)))
             for step in cfg.get("steps") or []:
                 try:
                     _run_step(page, step)

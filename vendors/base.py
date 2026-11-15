@@ -8,6 +8,7 @@ import re
 
 from core.address import AU_STATES, VALID_STATE_CODES, is_po_box, state_name
 from core.price import parse_price
+from core.attention import wait_for_human
 from core.stock import IN_STOCK_NO_NUMBER, parse_stock
 
 
@@ -422,20 +423,37 @@ class Vendor:
                 pass
         return closed
 
-    def guard(self, page):
-        self.dismiss_popups(page)
+    def blocked(self, page):
+        """'captcha' / '2fa' / 'sign-in' when the page needs a person, else None."""
         url = (page.url or "").lower()
         text = body_text(page).lower()
         for kind, pats in CHALLENGES:
             if any(p in text for p in pats):
-                raise ChallengeError(f"{kind} challenge on page; not attempted")
+                return kind
         if not self.allow_guest:
             try:
                 pw = page.locator("input[type=password]:visible").count()  # hidden sign-in popups do not count
             except Exception:
                 pw = 0
             if pw or any(u in url for u in LOGIN_URL_PARTS):
-                raise ChallengeError("login wall; profile is not logged in")
+                return "sign-in"
+        return None
+
+    def guard(self, page):
+        """Captcha, 2-step code or sign-in page: wait for the person at the laptop to solve it, then go on."""
+        self.dismiss_popups(page)
+        kind = self.blocked(page)
+        if kind is None:
+            return
+        what = {"captcha": "Captcha", "2fa": "2-step verification code", "sign-in": "Sign-in needed"}.get(kind, kind)
+        vendor = self.name.replace("_", " ").upper()
+        if wait_for_human(page, f"{what} on {vendor} ({self.account.chrome_profile} profile)",
+                          lambda: self.blocked(page) is not None):
+            settle(page, 2000)
+            return
+        if kind == "sign-in":
+            raise ChallengeError("login wall; profile is not logged in (nobody signed in on the laptop in time)")
+        raise ChallengeError(f"{kind} challenge on page; nobody solved it on the laptop in time")
 
     def open_product(self, page, url):
         goto(page, url)

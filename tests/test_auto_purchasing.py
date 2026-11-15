@@ -380,3 +380,31 @@ def test_copy_profile_keeps_name_and_points_only_at_itself(tmp_path):
     assert state["profile"]["last_used"] == "Default"
     assert state["profile"]["info_cache"] == {"Default": {"name": "Kogan Seller"}}
     assert "profiles_order" not in state["profile"]
+
+
+class SignsInLaterPage(PortalPage):
+    """Signed out at first; the person signs in on the laptop during the wait."""
+
+    def __init__(self):
+        super().__init__(login=True)
+        self.waits = 0
+
+    def wait_for_timeout(self, ms):
+        self.waits += 1
+        if self.waits >= 3:
+            self.login = False
+            self.url = "https://seller/orders"
+
+
+def test_portal_waits_for_sign_in_then_downloads(tmp_path, monkeypatch):
+    from core import attention
+    monkeypatch.setattr(attention, "wait_minutes", lambda: 1)
+    said = []
+    attention.set_notifier(said.append)
+    try:
+        page = SignsInLaterPage()
+        path = fetch_orders_file("kogan", PORTAL_CFG, tmp_path, session_factory=lambda a: PortalSession(page))
+    finally:
+        attention.set_notifier(None)
+    assert path.read_bytes() == b"orders"
+    assert "Sign-in needed for the Kogan seller portal" in said[0] and said[-1] == ""

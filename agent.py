@@ -125,6 +125,14 @@ class Agent:
         out.mkdir(parents=True, exist_ok=True)
         code, text = 1, ""
         path = None
+        from core import attention
+
+        def tell(msg):  # "Action needed on the laptop" on the Orders page while the bot waits
+            try:
+                self._post(job["progress_url"], {"attention": msg}, out)
+            except Exception:
+                pass
+        attention.set_notifier(tell)
         try:
             path = Path(self.fetcher(job["marketplace"], work, self.root))
             with open(path, "rb") as fh:
@@ -141,6 +149,7 @@ class Agent:
         except Exception as e:
             text = str(e) or type(e).__name__
         finally:
+            attention.set_notifier(None)
             # The orders file holds customer addresses: do not keep it on the laptop.
             if path is not None:
                 Path(path).unlink(missing_ok=True)
@@ -154,6 +163,8 @@ class Agent:
         out = work / "output"
         out.mkdir(parents=True, exist_ok=True)
         stdout_path = work / "stdout.txt"
+        attention_file = out / "attention.txt"
+        attention_file.unlink(missing_ok=True)
         code = 1
         try:
             for kind, name in (("orders", "orders.xlsx"), ("mapping", "mapping.xlsx"), ("accounts", "accounts.json")):
@@ -161,10 +172,23 @@ class Agent:
             cmd = build_command(job, self.cfg["python"], work)
             with open(stdout_path, "w", encoding="utf-8") as so:
                 proc = self.popen(cmd, cwd=str(self.root), stdout=so, stderr=subprocess.STDOUT,
-                                  env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+                                  env={**os.environ, "PYTHONIOENCODING": "utf-8",
+                                       "ORDERBOT_ATTENTION_FILE": str(attention_file)})
                 last = last_cancel = 0.0
+                said = ""
                 while proc.poll() is None:
                     self.sleep(self.cfg.get("tick_seconds", 5))
+                    # The bot is waiting for a person (sign-in / captcha): tell the web app at once.
+                    try:
+                        now_says = attention_file.read_text(encoding="utf-8").strip() if attention_file.exists() else ""
+                    except OSError:
+                        now_says = said
+                    if now_says != said:
+                        said = now_says
+                        try:
+                            self._post(job["progress_url"], {"attention": said}, out)
+                        except Exception:
+                            pass
                     if time.monotonic() - last >= self.cfg["progress_seconds"]:
                         last = time.monotonic()
                         try:
