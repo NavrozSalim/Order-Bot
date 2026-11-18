@@ -460,6 +460,14 @@ class Vendor:
         settle(page)
         self.guard(page)
 
+    def set_delivery_postcode(self, page, line):
+        """Make the product page show stock and price for the customer's postcode (line.postcode).
+
+        Called right after the product page opens, before stock and price are read. Raise VendorError when
+        the vendor does not deliver there. Default: the page has no postcode to set (Costco AU prices
+        include delivery; the address is entered at checkout).
+        """
+
     def select_variant(self, page, vendor_sku):
         """Pick the colour / size that is this vendor SKU (pages with variants). Default: nothing to pick."""
 

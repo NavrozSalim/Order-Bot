@@ -250,6 +250,32 @@ class Amazon(Vendor):
         click_required(page, self.place_selectors, "Place your order")
         settle(page, 2500)
 
+    def set_delivery_postcode(self, page, line):
+        """Set "Deliver to" (top of the page) to the customer's postcode, so stock, price and
+        "cannot be delivered" are for the customer, not for the purchase account's own address."""
+        want = re.sub(r"\D", "", line.postcode or "")
+        if not want:
+            raise VendorError("the order has no postcode; Amazon 'Deliver to' was not set")
+        if not _shows_postcode(_glow_text(page), want):
+            click_required(page, GLOW_OPEN, "Deliver to")
+            box = first_visible(page, GLOW_POSTCODE, 8000)
+            if box is None:
+                raise VendorError("Amazon 'Deliver to' postcode box not found; " + _where(page))
+            type_into(page, box, want)
+            click_required(page, GLOW_APPLY, "Apply postcode")
+            settle(page, 2000)
+            click_optional(page, GLOW_DONE, 4000)
+            settle(page, 1500)
+            page.reload()
+            settle(page)
+            self.guard(page)
+            if not _shows_postcode(_glow_text(page), want):
+                raise VendorError(f"Amazon 'Deliver to' did not change to {want} (page shows "
+                                  f"{_glow_text(page)[:60]!r}); not bought")
+        said = _buybox_text(page)
+        if any(p in said for p in NO_DELIVERY_TEXT):
+            raise VendorError(f"Amazon does not deliver this item to {want}: {said[:160]}")
+
     def open_product(self, page, url):
         super().open_product(page, url)
         try:  # kept to find the order in "Returns & orders" after it is placed
@@ -285,6 +311,48 @@ class Amazon(Vendor):
                 return number
             page.wait_for_timeout(5000)
         return None
+
+
+# "Deliver to" location box at the top of every Amazon page (the "glow" popover).
+GLOW_OPEN = ["#nav-global-location-popover-link", "#glow-ingress-block", "#nav-global-location-slot a"]
+GLOW_TEXT = ["#glow-ingress-line2", "#nav-global-location-slot"]
+GLOW_POSTCODE = ["#GLUXZipUpdateInput", "input[aria-label*='postcode' i]", "input[aria-label*='zip' i]"]
+GLOW_APPLY = ["#GLUXZipUpdate input.a-button-input", "#GLUXZipUpdate input", "#GLUXZipUpdate",
+              "input[aria-labelledby='GLUXZipUpdate-announce']"]
+GLOW_DONE = ["#GLUXConfirmClose", "input[aria-labelledby='GLUXConfirmClose-announce']",
+             "button[name='glowDoneButton']", ".a-popover-footer button:has-text('Done')",
+             ".a-popover-footer span:has-text('Continue') input"]
+BUYBOX = ["#availability", "#deliveryBlockMessage", "#mir-layout-DELIVERY_BLOCK", "#exports_desktop_undeliverable_buybox",
+          "#outOfStock"]
+NO_DELIVERY_TEXT = ("cannot be shipped to your selected delivery location", "cannot be delivered to your selected",
+                    "does not ship to", "doesn't ship to", "not deliverable to", "cannot be dispatched to")
+
+
+def _glow_text(page):
+    for sel in GLOW_TEXT:
+        try:
+            loc = page.locator(sel)
+            if loc.count():
+                return " ".join((loc.first.inner_text(timeout=2000) or "").split())
+        except Exception:
+            continue
+    return ""
+
+
+def _shows_postcode(text, postcode):
+    return bool(re.search(rf"(?<!\d){re.escape(postcode)}(?!\d)", text or ""))
+
+
+def _buybox_text(page):
+    parts = []
+    for sel in BUYBOX:
+        try:
+            loc = page.locator(sel)
+            if loc.count():
+                parts.append(loc.first.inner_text(timeout=1500) or "")
+        except Exception:
+            continue
+    return " ".join(" ".join(parts).split()).lower().replace("’", "'")
 
 
 ADDRESS_NAME_FIELD = "#address-ui-widgets-enterAddressFullName"

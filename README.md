@@ -85,6 +85,12 @@ number `UNREAD` (so a rerun cannot buy it twice) and an error asking you to chec
   empty email box with no account email fails the line.
 * Costco AU / Costway AU refuse PO Box and Parcel Locker addresses. Costco AU only submits an address picked from a
   suggestion that matches suburb and postcode.
+* **Customer postcode on the product page.** Right after the product page opens, before stock and price are read:
+  * Amazon (AU and US): "Deliver to" at the top of the page is set to the customer's postcode. If it does not change,
+    or Amazon says the item cannot be delivered there, the line is `failed` and nothing is bought.
+  * eBay AU: the item's postage calculator is asked about the customer's postcode and quantity. "Doesn't post to" fails
+    the line; no answer goes on to checkout, which uses the customer's address anyway.
+  * Costco AU, Costway AU, Vevor AU: the product page has no postcode to set; the address is entered at checkout.
 * **Vendor selectors are best-effort.** They were written without access to logged-in vendor pages and will need
   adjusting in `vendors/*.py` on the first supervised dry-runs (Costco, Costway and Vevor often show no stock number,
   which yields `stock_unknown`). Run dry-runs on real lines and watch the window before ever using `--place`.
@@ -107,6 +113,15 @@ The Auto Order Bot page does not start the bot on the web server. It queues the 
 2. On the laptop: copy `agent.example.json` to `agent.json`, set `server` (the web app URL) and `token`.
 3. Double-click `run_agent.bat` and leave it open. Chrome opens on this laptop when a run starts.
 4. In the web app: upload the order file (new each day) and the mapping, pick the account, then Dry run or Place orders.
+
+**SoftEther VPN.** When `run_agent.bat` starts, the agent connects the SoftEther VPN Client connection `AU-OLD`
+(`vpncmd localhost /CLIENT /CMD AccountConnect AU-OLD`) and waits until the laptop's public IP is `103.100.38.134`.
+Before every job (Fetch, Process, Recheck order ID, Dry run) it checks the public IP again; on any other IP the job is
+stopped and the web app shows "VPN AU-OLD is not connected". Nothing is bought or fetched off the VPN. It connects
+only once: if the VPN drops, connect `AU-OLD` in SoftEther VPN Client Manager or restart `run_agent.bat`. The connection
+itself (server, user, password) is set up in SoftEther VPN Client Manager; the agent stores no VPN password.
+agent.json: `vpn_account` (default `AU-OLD`; `""` turns the step off), `vpn_ip` (default `103.100.38.134`),
+`vpncmd` (full path to `vpncmd.exe`; blank looks in `Program Files\SoftEther VPN Client`), `vpn_wait_seconds` (60).
 
 The agent downloads the two files and the generated accounts file, runs `run_us.py` / `run_au.py`, uploads the done,
 remaining and log files while it works and again at the end, then deletes the order export and accounts file from

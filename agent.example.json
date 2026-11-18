@@ -3,5 +3,8 @@
   "token": "",
   "poll_seconds": 15,
   "progress_seconds": 20,
-  "keep_addresses": ["Nisha Sharma", "Piyush Goplani"]
+  "keep_addresses": ["Nisha Sharma", "Piyush Goplani"],
+  "vpn_account": "AU-OLD",
+  "vpn_ip": "103.100.38.134",
+  "vpncmd": ""
 }

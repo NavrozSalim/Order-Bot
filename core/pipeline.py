@@ -120,6 +120,7 @@ def _process(line, mapping, account, vendor, store, place, lazy):
     stock, shot_base = "", store.screens / f"{_slug(line.order_id)}_{_slug(line.sku)}"
     try:
         vendor.open_product(page, entry.url)
+        vendor.set_delivery_postcode(page, line)  # stock / price / delivery for the customer's postcode
         vendor.select_variant(page, entry.vendor_sku)
         stock = vendor.read_stock(page)
         if stock is None:

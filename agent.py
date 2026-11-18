@@ -13,6 +13,8 @@ from pathlib import Path
 
 import requests
 
+from core.vpn import DEFAULT_ACCOUNT, DEFAULT_IP, Vpn
+
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = {"us": "run_us.py", "au": "run_au.py"}
 STDOUT_LIMIT = 20000
@@ -22,7 +24,9 @@ KINDS = "run,fetch_orders,purchase,lookup_order"
 
 
 def load_config(path=ROOT / "agent.json"):
-    cfg = {"server": "", "token": "", "poll_seconds": 15, "progress_seconds": 20, "python": sys.executable}
+    cfg = {"server": "", "token": "", "poll_seconds": 15, "progress_seconds": 20, "python": sys.executable,
+           # SoftEther VPN: connected when the agent starts; jobs run only from this public IP.
+           "vpn_account": DEFAULT_ACCOUNT, "vpn_ip": DEFAULT_IP, "vpncmd": ""}
     if Path(path).exists():
         cfg.update(json.loads(Path(path).read_text(encoding="utf-8-sig")))
     cfg["server"] = (os.environ.get("ORDERBOT_SERVER") or cfg["server"]).rstrip("/")
@@ -65,9 +69,10 @@ def _default_fetcher(marketplace, dest_dir, root):
 
 class Agent:
     def __init__(self, cfg, http=requests, sleep=time.sleep, popen=subprocess.Popen, root=ROOT,
-                 fetcher=_default_fetcher):
+                 fetcher=_default_fetcher, vpn=None):
         self.cfg, self.http, self.sleep, self.popen, self.root = cfg, http, sleep, popen, Path(root)
         self.fetcher = fetcher
+        self.vpn = vpn if vpn is not None else Vpn.from_config(cfg)
         self.headers = {"Authorization": f"Bearer {cfg['token']}"}
 
     def url(self, path):
@@ -156,7 +161,24 @@ class Agent:
         self._complete(job, code, text, out)
         return code
 
+    def refuse_off_vpn(self, job):
+        """Stop the job when the laptop is not on the VPN's public IP. Returns the exit code, or None to go on."""
+        ok, msg = self.vpn.check()
+        if ok:
+            return None
+        acct = self.vpn.account
+        text = (f"{msg} Nothing was bought or fetched. Connect {acct} in SoftEther VPN Client "
+                f"(or restart the order bot agent) and try again.")
+        print(f"  {text}")
+        out = self.root / "work" / job["job_id"] / "output"
+        out.mkdir(parents=True, exist_ok=True)
+        self._complete(job, 1, text, out)
+        return 1
+
     def run_job(self, job):
+        refused = self.refuse_off_vpn(job)
+        if refused is not None:
+            return refused
         if job.get("kind") == "fetch_orders":
             return self.run_fetch(job)
         work = self.root / "work" / job["job_id"]
@@ -214,6 +236,10 @@ class Agent:
         return code
 
     def loop(self):
+        if self.vpn.enabled:
+            print(f"Connecting SoftEther VPN {self.vpn.account} (expect public IP {self.vpn.ip})...")
+        ok, msg = self.vpn.connect()
+        print(("  " if ok else "  WARNING: ") + msg + ("" if ok else " Jobs will be stopped until it is connected."))
         print(f"Order bot laptop agent polling {self.cfg['server']} (Ctrl+C to stop)")
         while True:
             try:
