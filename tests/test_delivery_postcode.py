@@ -107,3 +107,51 @@ def test_ebay_au_without_an_answer_goes_on_to_checkout():
 def test_parse_rates_paid_option():
     assert ebay_rates.parse_rates(_rates("AU $12.50 delivery in 3-5 days")) == {
         "status": ebay_rates.PAID, "amount": 12.5, "text": "AU $12.50 delivery in 3-5 days"}
+
+
+# ---- Amazon AU "Deliver to": postcode, then the customer's suburb, then Apply ----------------------------
+from vendors.amazon import GLOW_AU_SUBURBS, pick_suburb  # noqa: E402
+
+
+def test_pick_suburb_prefers_the_customers_suburb():
+    opts = ["STIRLING", "STIRLING NORTH", "PORT AUGUSTA"]
+    assert pick_suburb(opts, "Stirling North") == "STIRLING NORTH"
+    assert pick_suburb(opts, "stirling") == "STIRLING"
+    assert pick_suburb(["ST KILDA WEST", "ST KILDA"], "St. Kilda") == "ST KILDA"
+
+
+def test_pick_suburb_falls_back_to_the_postcodes_first_suburb():
+    assert pick_suburb(["SYDNEY", "HAYMARKET"], "Somewhere Else") == "SYDNEY"
+    assert pick_suburb(["SYDNEY"], "") == "SYDNEY"
+
+
+class SuburbPage(FakePage):
+    """The suburb list fills after a couple of polls, like Amazon loading it for the typed postcode."""
+
+    def __init__(self, options, empty_polls=2):
+        super().__init__("")
+        self.options, self.empty_polls, self.picked = options, empty_polls, None
+
+    def evaluate(self, js, arg):
+        if isinstance(arg, list):  # pick: [select, value]
+            assert arg[0] == GLOW_AU_SUBURBS
+            self.picked = arg[1]
+            return True
+        if self.empty_polls:
+            self.empty_polls -= 1
+            return []
+        return self.options
+
+
+def test_amazon_au_picks_customer_suburb_once_the_list_loads():
+    page = SuburbPage(["STIRLING", "STIRLING NORTH"])
+    vendor = Amazon(ACCOUNT)
+    vendor.set_glow_suburb(page, SimpleNamespace(postcode="5710", city="Stirling North", buy_qty=1), "5710")
+    assert page.picked == "STIRLING NORTH" and vendor.glow_suburb == "STIRLING NORTH"
+
+
+def test_amazon_au_no_suburbs_for_postcode_stops_the_line():
+    page = SuburbPage([], empty_polls=0)
+    page.goto("https://www.amazon.com.au/dp/B0")
+    with pytest.raises(VendorError, match="no suburbs for postcode 9999"):
+        Amazon(ACCOUNT).set_glow_suburb(page, SimpleNamespace(postcode="9999", city="X", buy_qty=1), "9999")

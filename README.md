@@ -86,7 +86,9 @@ number `UNREAD` (so a rerun cannot buy it twice) and an error asking you to chec
 * Costco AU / Costway AU refuse PO Box and Parcel Locker addresses. Costco AU only submits an address picked from a
   suggestion that matches suburb and postcode.
 * **Customer postcode on the product page.** Right after the product page opens, before stock and price are read:
-  * Amazon (AU and US): "Deliver to" at the top of the page is set to the customer's postcode. If it does not change,
+  * Amazon (AU and US): "Deliver to" at the top of the page is set to the customer's postcode (Amazon AU: the postcode,
+    then the customer's suburb from Amazon's list for it, then Apply; no matching suburb picks that postcode's first
+    one). If it does not change,
     or Amazon says the item cannot be delivered there, the line is `failed` and nothing is bought.
   * eBay AU: the item's postage calculator is asked about the customer's postcode and quantity. "Doesn't post to" fails
     the line; no answer goes on to checkout, which uses the customer's address anyway.

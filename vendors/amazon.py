@@ -258,11 +258,17 @@ class Amazon(Vendor):
             raise VendorError("the order has no postcode; Amazon 'Deliver to' was not set")
         if not _shows_postcode(_glow_text(page), want):
             click_required(page, GLOW_OPEN, "Deliver to")
-            box = first_visible(page, GLOW_POSTCODE, 8000)
+            box = first_visible(page, GLOW_AU_POSTCODE + GLOW_POSTCODE, 8000)
             if box is None:
                 raise VendorError("Amazon 'Deliver to' postcode box not found; " + _where(page))
+            au_box = first_visible(page, GLOW_AU_POSTCODE, 500) is not None
             type_into(page, box, want)
-            click_required(page, GLOW_APPLY, "Apply postcode")
+            if au_box:
+                # Amazon AU: the postcode loads its suburbs; Apply is refused until one is picked.
+                self.set_glow_suburb(page, line, want)
+                click_required(page, GLOW_AU_APPLY, "Apply postcode and suburb")
+            else:
+                click_required(page, GLOW_APPLY, "Apply postcode")
             settle(page, 2000)
             click_optional(page, GLOW_DONE, 4000)
             settle(page, 1500)
@@ -275,6 +281,25 @@ class Amazon(Vendor):
         said = _buybox_text(page)
         if any(p in said for p in NO_DELIVERY_TEXT):
             raise VendorError(f"Amazon does not deliver this item to {want}: {said[:160]}")
+
+    def set_glow_suburb(self, page, line, postcode):
+        """Pick the customer's suburb in the "Deliver to" suburb list once Amazon has loaded it for the postcode."""
+        options = []
+        for _ in range(20):  # the list fills a moment after the postcode is typed
+            try:
+                options = page.evaluate(_GLOW_SUBURBS_JS, GLOW_AU_SUBURBS) or []
+            except Exception:
+                options = []
+            if options:
+                break
+            page.wait_for_timeout(500)
+        if not options:
+            raise VendorError(f"Amazon listed no suburbs for postcode {postcode}; " + _where(page))
+        choice = pick_suburb(options, line.city)
+        if not page.evaluate(_PICK_GLOW_SUBURB_JS, [GLOW_AU_SUBURBS, choice]):
+            raise VendorError(f"could not pick suburb {choice!r} for postcode {postcode} in Amazon 'Deliver to'")
+        self.glow_suburb = choice
+        settle(page, 500)
 
     def open_product(self, page, url):
         super().open_product(page, url)
@@ -317,6 +342,21 @@ class Amazon(Vendor):
 GLOW_OPEN = ["#nav-global-location-popover-link", "#glow-ingress-block", "#nav-global-location-slot a"]
 GLOW_TEXT = ["#glow-ingress-line2", "#nav-global-location-slot"]
 GLOW_POSTCODE = ["#GLUXZipUpdateInput", "input[aria-label*='postcode' i]", "input[aria-label*='zip' i]"]
+# Amazon AU: postcode box, then a suburb list for that postcode, then Apply (checked on amazon.com.au).
+GLOW_AU_POSTCODE = ["#GLUXPostalCodeWithCity_PostalCodeInput"]
+GLOW_AU_SUBURBS = "#GLUXPostalCodeWithCity_DropdownList"
+GLOW_AU_APPLY = ["#GLUXPostalCodeWithCityApplyButton input.a-button-input", "#GLUXPostalCodeWithCityApplyButton input",
+                 "input[aria-labelledby='GLUXPostalCodeWithCity_ApplyButtonLabel']", "#GLUXPostalCodeWithCityApplyButton"]
+_GLOW_SUBURBS_JS = r"""(sel) => [...(document.querySelector(sel)?.options || [])]
+  .map(o => (o.value || '').trim()).filter(v => v && !/^select\b/i.test(v))"""
+# The suburb list is a native <select> behind Amazon's dropdown; its change event is what Apply reads.
+_PICK_GLOW_SUBURB_JS = r"""([sel, value]) => {
+  const s = document.querySelector(sel);
+  if (!s) return false;
+  s.value = value;
+  s.dispatchEvent(new Event('change', {bubbles: true}));
+  return s.value === value;
+}"""
 GLOW_APPLY = ["#GLUXZipUpdate input.a-button-input", "#GLUXZipUpdate input", "#GLUXZipUpdate",
               "input[aria-labelledby='GLUXZipUpdate-announce']"]
 GLOW_DONE = ["#GLUXConfirmClose", "input[aria-labelledby='GLUXConfirmClose-announce']",
@@ -337,6 +377,28 @@ def _glow_text(page):
         except Exception:
             continue
     return ""
+
+
+def _suburb_key(text):
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", (text or "").upper()).split())
+
+
+def pick_suburb(options, city):
+    """The customer's suburb from Amazon's list for the postcode (Amazon writes them in capitals).
+
+    Exact name first, then a name that starts with / contains the other. When none matches (a spelling
+    Amazon does not use), the first suburb of the same postcode: delivery and price follow the postcode,
+    and checkout still uses the customer's own address.
+    """
+    want = _suburb_key(city)
+    keyed = [(_suburb_key(o), o) for o in options]
+    if want:
+        for test in (lambda k: k == want, lambda k: k.startswith(want) or want.startswith(k),
+                     lambda k: want in k or k in want):
+            for k, o in keyed:
+                if k and test(k):
+                    return o
+    return options[0]
 
 
 def _shows_postcode(text, postcode):
