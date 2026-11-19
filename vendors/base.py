@@ -468,6 +468,20 @@ class Vendor:
         include delivery; the address is entered at checkout).
         """
 
+    reads_checkout_total = False  # True when read_checkout_total() works, so Max Total is enforced
+
+    def choose_delivery(self, page, line):
+        """At checkout (after fill_shipping): pick the delivery option by the day rules (core.delivery).
+
+        Returns {"date", "days", "fee", "text"} for the option picked, or {"too_late": True, "reason"} when no
+        option arrives within 15 days. Default: the vendor offers no choice (None).
+        """
+        return None
+
+    def read_checkout_total(self, page):
+        """Order Total on the checkout page (items + delivery) as a Decimal, or None."""
+        return None
+
     def select_variant(self, page, vendor_sku):
         """Pick the colour / size that is this vendor SKU (pages with variants). Default: nothing to pick."""
 

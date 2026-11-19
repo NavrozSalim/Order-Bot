@@ -14,6 +14,8 @@ WRONG_VENDOR = "wrong_vendor"
 STOCK_UNKNOWN = "stock_unknown"
 OUT_OF_STOCK = "out_of_stock"
 PRICE_CHANGED = "price_changed"   # vendor price above the mapping's Max Price: not bought
+DELIVERY_TOO_LATE = "delivery_too_late"      # no delivery option within 15 days: not bought
+LOSS_AFTER_DELIVERY = "loss_after_delivery"  # checkout total (items + delivery) above Max Total: not bought
 READY = "ready_for_payment"
 PURCHASED = "purchased"
 FAILED = "failed"
@@ -36,9 +38,18 @@ class LineResult:
     vendor_order_number: str = ""
     error: str = ""
     screenshot: str = ""
+    # Delivery picked at checkout (Amazon): arrival date (ISO), days from the purchase day, fee, option text,
+    # and the checkout's Order Total.
+    delivery_date: str = ""
+    delivery_days: object = ""
+    delivery_fee: object = ""
+    delivery_text: str = ""
+    checkout_total: object = ""
 
 
 COLUMNS = [f.name for f in fields(LineResult)]
+# Files written before the delivery columns were added have only these; they still load.
+BASE_COLUMNS = COLUMNS[:10]
 
 
 def line_key(order_id, sku):
@@ -79,7 +90,7 @@ class ResultStore:
         wb = openpyxl.load_workbook(self.done_path, read_only=True, data_only=True)
         rows = wb.worksheets[0].iter_rows(values_only=True)
         header = [str(c or "") for c in next(rows, ())]
-        if header != COLUMNS:
+        if header != COLUMNS and header != BASE_COLUMNS:
             raise ValueError(f"{self.done_path} does not have the expected columns; move it aside")
         for row in rows:
             d = dict(zip(header, row))

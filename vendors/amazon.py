@@ -1,7 +1,11 @@
 """Amazon US. Selectors are best-effort; tune with a supervised dry-run."""
 import re
+from datetime import date
+from decimal import Decimal
 
+from core import delivery as dl
 from core.address import split_name
+from core.price import parse_price
 from .base import (goto, click_loc, scroll_to, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
                    click_required, fill_field,
                    address_keys, find_required, first_visible, page_buttons, settle)
@@ -301,6 +305,58 @@ class Amazon(Vendor):
         self.glow_suburb = choice
         settle(page, 500)
 
+    # ---- checkout: delivery option, packaging, Order Total ----------------------------------------------
+    reads_checkout_total = True
+
+    def choose_delivery(self, page, line, today=None):
+        """Pick the delivery option by the day rules (core.delivery) and keep "Reduce packaging" selected."""
+        today = today or date.today()
+        options = dl.parse_options(_delivery_rows(page), today)
+        if not options:
+            # One fixed option (no radio buttons): read its "Arriving by <date>" heading.
+            heading = _arriving_text(page)
+            when = dl.arrival_date(heading, today)
+            if when is None:
+                raise VendorError("no delivery date found at checkout; not bought (the day limits could not be "
+                                  "checked); " + _where(page))
+            options = [dl.Option(-1, heading, when, dl.option_fee(heading), True)]
+        choice = dl.choose(options, today)
+        if choice.option is None:
+            return {"too_late": True, "reason": choice.reason, "text": options[0].text}
+        opt = choice.option
+        if not opt.checked:
+            _click_radio(page, opt.index)
+            settle(page, 2000)
+            again = dl.parse_options(_delivery_rows(page), today)
+            now = next((o for o in again if o.text == opt.text), None)
+            if now is None or not now.checked:
+                raise VendorError(f"could not select the delivery option {opt.text[:80]!r}")
+        self.choose_packaging(page)
+        fee = opt.fee if opt.fee is not None else Decimal("0")
+        return {"date": opt.date, "days": opt.days(today), "fee": fee, "text": opt.text}
+
+    def choose_packaging(self, page):
+        """When Amazon asks how to pack: "Reduce packaging, dispatch in manufacturer's container"."""
+        try:
+            got = page.evaluate(_PACKAGING_JS) or {}
+        except Exception:
+            got = {}
+        kind = got.get("kind") or ""
+        if kind == "text":  # a custom list: click the option itself
+            loc = page.get_by_text(PACKAGING_RE).first
+            try:
+                loc.click(timeout=4000)
+            except Exception as e:
+                raise VendorError(f"could not select 'Reduce packaging, dispatch in manufacturer's container': {e}")
+            settle(page, 800)
+        elif kind and not got.get("ok"):
+            raise VendorError("could not select 'Reduce packaging, dispatch in manufacturer's container'")
+        self.packaging = kind
+
+    def read_checkout_total(self, page):
+        m = ORDER_TOTAL_RE.search(body_text(page))
+        return parse_price(m.group(1)) if m else None
+
     def open_product(self, page, url):
         super().open_product(page, url)
         try:  # kept to find the order in "Returns & orders" after it is placed
@@ -336,6 +392,72 @@ class Amazon(Vendor):
                 return number
             page.wait_for_timeout(5000)
         return None
+
+
+# ---- checkout delivery options ----------------------------------------------------------------------------
+# Each radio button with the text of its own row (the largest box around it holding no other radio button).
+_DELIVERY_ROWS_JS = r"""() => [...document.querySelectorAll('input[type=radio]')].map((r, index) => {
+  let el = r, text = '';
+  for (let k = 0; k < 8 && el.parentElement; k++) {
+    const up = el.parentElement;
+    if (up.querySelectorAll('input[type=radio]').length > 1) break;
+    el = up;
+    text = (el.innerText || '').trim();
+  }
+  if (!text) text = ((r.closest('label') || {}).innerText || '').trim();
+  const shown = !!(r.offsetParent || el.offsetParent);
+  return {index, text: text.slice(0, 300), checked: r.checked, shown};
+}).filter(x => x.shown && x.text)"""
+_CLICK_RADIO_JS = r"""(i) => { const r = document.querySelectorAll('input[type=radio]')[i]; if (!r) return false;
+  r.click(); return r.checked; }"""
+# "Arriving by 3 Dec 2026" above the item when there is only one delivery option.
+_ARRIVING_RE = re.compile(r"\b(?:arriving|arrives|get it)\b[^\n]{0,60}", re.I)
+PACKAGING_RE = re.compile(r"reduce packaging,?\s+dispatch in manufacturer", re.I)
+_PACKAGING_JS = r"""() => {
+  const want = /reduce packaging.*manufacturer/i;
+  for (const s of document.querySelectorAll('select')) {
+    const o = [...s.options].find(o => want.test(o.text));
+    if (o) {
+      if (s.value !== o.value) { s.value = o.value; s.dispatchEvent(new Event('change', {bubbles: true})); }
+      const cur = s.options[s.selectedIndex];
+      return {kind: 'select', ok: !!cur && want.test(cur.text)};
+    }
+  }
+  for (const r of document.querySelectorAll('input[type=radio]')) {
+    const t = ((r.closest('label') || r.parentElement || {}).innerText) || '';
+    if (want.test(t)) { if (!r.checked) r.click(); return {kind: 'radio', ok: r.checked}; }
+  }
+  const leaf = [...document.querySelectorAll('[role=option], li, a, span, div')]
+    .find(e => e.children.length === 0 && want.test(e.textContent || '') && e.offsetParent);
+  return leaf ? {kind: 'text', ok: null} : {kind: '', ok: null};
+}"""
+ORDER_TOTAL_RE = re.compile(r"order\s+total[^$\d]{0,40}\$\s*([\d,]+\.\d{2})", re.I)
+
+
+def _delivery_rows(page):
+    try:
+        return page.evaluate(_DELIVERY_ROWS_JS) or []
+    except Exception:
+        return []
+
+
+def _click_radio(page, index):
+    try:
+        page.locator("input[type=radio]").nth(index).check(timeout=3000)
+        return
+    except Exception:
+        pass
+    try:
+        if page.evaluate(_CLICK_RADIO_JS, index):
+            return
+    except Exception:
+        pass
+    raise VendorError("could not click the delivery option")
+
+
+def _arriving_text(page):
+    m = _ARRIVING_RE.search(body_text(page))
+    return m.group(0) if m else ""
 
 
 # "Deliver to" location box at the top of every Amazon page (the "glow" popover).

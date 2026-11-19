@@ -93,6 +93,19 @@ number `UNREAD` (so a rerun cannot buy it twice) and an error asking you to chec
   * eBay AU: the item's postage calculator is asked about the customer's postcode and quantity. "Doesn't post to" fails
     the line; no answer goes on to checkout, which uses the customer's address anyway.
   * Costco AU, Costway AU, Vevor AU: the product page has no postcode to set; the address is entered at checkout.
+* **Amazon checkout: delivery, packaging, profit** (after the shipping address, before Place your order; also in a
+  dry run). Days are counted from the day the bot buys:
+  * The delivery option must arrive within 8 days; if none does, within 15 days (the date is saved and the Orders page
+    shows it as later than 8 days). Nothing within 15 days: the line is `delivery_too_late` and nothing is bought.
+  * Among the options inside the limit: the cheapest, then the earliest date, then the first one (two options with
+    the same date and price: the first).
+  * When Amazon asks how to pack, "Reduce packaging, dispatch in manufacturer's container" is selected.
+  * The Order Total (items + delivery fee) must not be above the mapping's `Max Total` (6th column, written by the
+    web app so the order keeps a profit). Above it: `loss_after_delivery`, nothing is bought, and the Orders page shows
+    the loss for review (Force process buys it anyway and sends no Max Total). An unreadable Order Total with a
+    Max Total set fails the line.
+  * Result columns `delivery_date`, `delivery_days`, `delivery_fee`, `delivery_text`, `checkout_total` go back to the
+    web app, which shows the arrival date on the order.
 * **Vendor selectors are best-effort.** They were written without access to logged-in vendor pages and will need
   adjusting in `vendors/*.py` on the first supervised dry-runs (Costco, Costway and Vevor often show no stock number,
   which yields `stock_unknown`). Run dry-runs on real lines and watch the window before ever using `--place`.

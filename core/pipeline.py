@@ -60,9 +60,32 @@ class _LazySession:
             self.session.__exit__(None, None, None)
 
 
-def _result(line, status, entry=None, stock="", number="", error="", shot=""):
-    return R.LineResult(line.order_id, line.sku, line.buy_qty, entry.vendor if entry else "",
-                        entry.url if entry else "", stock, status, number, error, shot)
+def _result(line, status, entry=None, stock="", number="", error="", shot="", delivery=None):
+    res = R.LineResult(line.order_id, line.sku, line.buy_qty, entry.vendor if entry else "",
+                       entry.url if entry else "", stock, status, number, error, shot)
+    d = delivery or {}
+    if d.get("date"):
+        res.delivery_date = d["date"].isoformat()
+        res.delivery_days = d.get("days", "")
+    res.delivery_fee = "" if d.get("fee") is None else float(d["fee"])
+    res.delivery_text = (d.get("text") or "")[:200]
+    res.checkout_total = "" if d.get("checkout_total") is None else float(d["checkout_total"])
+    return res
+
+
+def _profit_problem(entry, delivery):
+    """Why the checkout total (items + delivery) breaks the mapping's Max Total, or ''."""
+    if entry.max_total is None:
+        return ""
+    total = delivery.get("checkout_total")
+    if total is None:
+        return f"checkout Order Total not readable; not bought (Max Total {entry.max_total})"
+    if total > entry.max_total:
+        fee = delivery.get("fee")
+        fee_txt = "FREE" if fee == 0 else (f"{fee}" if fee is not None else "not shown")
+        return (f"checkout total {total} (delivery {fee_txt}) is above Max Total {entry.max_total}: "
+                f"the order would make a loss; not bought")
+    return ""
 
 
 def process_lines(lines, mapping, account, vendor, store, place, lazy, lookup=False):
@@ -145,19 +168,31 @@ def _process(line, mapping, account, vendor, store, place, lazy):
         vendor.set_quantity(page, line.buy_qty)
         vendor.add_to_cart(page)
         vendor.fill_shipping(page, line)
+        # Checkout: delivery option by the day rules, packaging, then the Order Total against Max Total.
+        delivery = vendor.choose_delivery(page, line) or {}
+        if delivery.get("too_late"):
+            return _result(line, R.DELIVERY_TOO_LATE, entry, stock, error=f"not bought: {delivery['reason']}",
+                           shot=session.screenshot(page, f"{shot_base}_delivery_late.png"), delivery=delivery)
+        if vendor.reads_checkout_total:
+            delivery["checkout_total"] = vendor.read_checkout_total(page)
+            problem = _profit_problem(entry, delivery)
+            if problem:
+                status = R.FAILED if delivery["checkout_total"] is None else R.LOSS_AFTER_DELIVERY
+                return _result(line, status, entry, stock, error=problem,
+                               shot=session.screenshot(page, f"{shot_base}_loss.png"), delivery=delivery)
         if not place:
-            return _result(line, R.READY, entry, stock)
+            return _result(line, R.READY, entry, stock, delivery=delivery)
         vendor.submit_order(page)
         try:
             number = vendor.read_order_number(page)
         except Exception:
             number = None
         if number:
-            return _result(line, R.PURCHASED, entry, stock, number=number)
+            return _result(line, R.PURCHASED, entry, stock, number=number, delivery=delivery)
         # The click went through: record it so a rerun cannot buy the line twice.
         return _result(line, R.PURCHASED, entry, stock, number="UNREAD",
                        error="order placed but number not read; check the vendor account",
-                       shot=session.screenshot(page, f"{shot_base}_unread.png"))
+                       shot=session.screenshot(page, f"{shot_base}_unread.png"), delivery=delivery)
     except Exception as e:
         return _result(line, R.FAILED, entry, stock, error=f"{type(e).__name__}: {e}"[:300],
                        shot=session.screenshot(page, f"{shot_base}_failed.png"))

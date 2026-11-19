@@ -33,6 +33,8 @@ VENDOR_HOSTS = {
 HEADERS = ("sku", "vendor", "vendor url", "vendor sku")
 # Optional fifth column. When set, the bot buys the line only if the vendor page price is not above it.
 MAX_PRICE_HEADER = "max price"
+# Optional 6th column: the most the line may cost at checkout (items + delivery) and still make a profit.
+MAX_TOTAL_HEADER = "max total"
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class MapEntry:
     url: str
     vendor_sku: str
     max_price: object = None  # Decimal per unit, or None when the mapping has no Max Price
+    max_total: object = None  # Decimal for the whole line at checkout, or None (no profit guard)
 
 
 def sku_key(sku):
@@ -73,9 +76,10 @@ def load_mapping(path, region):
     if tuple(header[:4]) != HEADERS:
         raise MappingError("mapping header row must be: SKU | Vendor | Vendor URL | Vendor SKU")
     has_max = len(header) > 4 and header[4] == MAX_PRICE_HEADER
+    has_total = len(header) > 5 and header[5] == MAX_TOTAL_HEADER
     out = {}
     for n, row in enumerate(rows, start=2):
-        row = list(row) + [None] * 5
+        row = list(row) + [None] * 6
         sku, vendor, url, vsku = (_s(c) for c in row[:4])
         if not (sku or vendor or url or vsku):
             continue
@@ -96,8 +100,14 @@ def load_mapping(path, region):
                 max_price = parse_max_price(row[4])
             except ValueError as e:
                 raise MappingError(f"mapping row {n}: {e}") from None
+        max_total = None
+        if has_total:
+            try:
+                max_total = parse_max_price(row[5])
+            except ValueError as e:
+                raise MappingError(f"mapping row {n}: Max Total: {e}") from None
         k = sku_key(sku)
         if k in out:
             raise MappingError(f"mapping row {n}: SKU {sku!r} appears more than once")
-        out[k] = MapEntry(sku, vendor, url, vsku, max_price)
+        out[k] = MapEntry(sku, vendor, url, vsku, max_price, max_total)
     return out
