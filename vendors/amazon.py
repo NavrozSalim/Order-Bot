@@ -1,4 +1,5 @@
 """Amazon US. Selectors are best-effort; tune with a supervised dry-run."""
+import logging
 import re
 from datetime import date
 from decimal import Decimal
@@ -9,6 +10,8 @@ from core.price import parse_price
 from .base import (goto, click_loc, scroll_to, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
                    click_required, fill_field,
                    address_keys, find_required, first_visible, page_buttons, settle)
+
+log = logging.getLogger("orderbot")
 
 
 class Amazon(Vendor):
@@ -34,8 +37,7 @@ class Amazon(Vendor):
         goto(page, self.cart_url)
         settle(page)
         self.guard(page)
-        click_required(page, ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",
-                              "a:has-text('Proceed to checkout')"], "Proceed to checkout")
+        click_required(page, PROCEED_TO_CHECKOUT, "Proceed to checkout")
         self.guard(page)
         self._ship_name = line.ship_name
         self._edit_tried = False
@@ -73,6 +75,14 @@ class Amazon(Vendor):
             if not click_optional(page, KEEP_ENTERED_ADDRESS, 4000):
                 raise VendorError("Amazon suggested a different address; not confirmed; " + page_buttons(page))
             settle(page, 2000)
+        self.address_to_review(page, line)
+        self.recover_checkout_error(page, line)
+        if find_required(page, self.place_selectors) is None:
+            raise VendorError("review page with 'Place your order' not reached; " + page_buttons(page))
+        self.confirm_address_shown(page, line)
+
+    def address_to_review(self, page, line):
+        """From the list of saved addresses to the review page: the customer's address, then payment."""
         # Back on the list of saved addresses: tick the customer's one before "Deliver to this address".
         if first_visible(page, _btn("Deliver to this address"), 3000) is not None:
             picked = False
@@ -88,9 +98,28 @@ class Amazon(Vendor):
         click_optional(page, ["input[name*='SetPaymentPlanSelectContinueEvent']"] + _btn("Use this payment method"), 4000)
         click_optional(page, _btn("Continue"), 3000)
         self.guard(page)
-        if find_required(page, self.place_selectors) is None:
-            raise VendorError("review page with 'Place your order' not reached; " + page_buttons(page))
-        self.confirm_address_shown(page, line)
+
+    def recover_checkout_error(self, page, line):
+        """Amazon's own "Something went wrong" checkout page (/gp/buy/.../error.html, no buttons) comes and goes.
+
+        Nothing is ordered at that point. Wait, go back through the cart's Proceed to checkout (the customer's
+        address is saved by now) and try again, up to CHECKOUT_ERROR_RETRIES times.
+        """
+        tries = 0
+        while on_checkout_error(page):
+            if tries >= CHECKOUT_ERROR_RETRIES:
+                raise VendorError(f"Amazon showed its checkout error page {tries + 1} times ({page.url}); nothing "
+                                  "bought; press Process again later")
+            tries += 1
+            log.warning("Amazon checkout error page (%s); trying again (%d of %d)", page.url, tries,
+                        CHECKOUT_ERROR_RETRIES)
+            page.wait_for_timeout(CHECKOUT_ERROR_WAIT_MS)
+            goto(page, self.cart_url)
+            settle(page)
+            self.guard(page)
+            click_required(page, PROCEED_TO_CHECKOUT, "Proceed to checkout")
+            self.guard(page)
+            self.address_to_review(page, line)
 
     def edit_old_address(self, page):
         """On the list of saved addresses: click "Edit address" on an old customer's address so the new
@@ -392,6 +421,18 @@ class Amazon(Vendor):
                 return number
             page.wait_for_timeout(5000)
         return None
+
+
+PROCEED_TO_CHECKOUT = ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",
+                       "a:has-text('Proceed to checkout')"]
+# Amazon's "Something went wrong" page during checkout, e.g. /gp/buy/payselect/handlers/error.html.
+CHECKOUT_ERROR_RE = re.compile(r"/gp/buy/[^?#]*error", re.I)
+CHECKOUT_ERROR_RETRIES = 2
+CHECKOUT_ERROR_WAIT_MS = 5000
+
+
+def on_checkout_error(page):
+    return bool(CHECKOUT_ERROR_RE.search(page.url or ""))
 
 
 # ---- checkout delivery options ----------------------------------------------------------------------------
