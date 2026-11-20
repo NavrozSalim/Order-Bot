@@ -478,3 +478,28 @@ def test_amazon_late_address_list_with_show_more(page):
     assert "/checkout/p/review" in page.url
     addr = page.inner_text("#addr")
     assert "65 SOMERSET GROVE" in addr and "Greg" not in addr
+
+
+def test_amazon_address_list_slower_than_one_look(page, monkeypatch):
+    """Seen on the laptop after Amazon's error page: the list drew after the first look gave up ("not
+    recognised yet") and the run failed on the address page. The bot now looks again until the review page."""
+    monkeypatch.setattr(amz, "ADDRESS_LIST_WAIT_MS", 2000)   # list shows after 4 s, longer than one look
+    serve(page, {"/checkout/p/p-1/address": LATE_ADDRESS_LIST, "/checkout/p/review": AMZ_REVIEW})
+    page.goto("https://www.amazon.com.au/checkout/p/p-1/address")
+    AmazonAU(Account("a", "amazon_au", "au", "Default")).address_to_review(page, AmzLine())
+    assert "/checkout/p/review" in page.url
+    addr = page.inner_text("#addr")
+    assert "65 SOMERSET GROVE" in addr and "Greg" not in addr
+
+
+def test_amazon_checkout_page_that_never_draws_stops_in_time(page, monkeypatch):
+    import time as _time
+
+    monkeypatch.setattr(amz, "ADDRESS_LIST_WAIT_MS", 1000)
+    monkeypatch.setattr(amz, "CHECKOUT_PAGE_WAIT_MS", 5000)
+    serve(page, {"/checkout/p/p-1/address": "<html><body><h1>Secure checkout</h1>loading...</body></html>"})
+    page.goto("https://www.amazon.com.au/checkout/p/p-1/address")
+    start = _time.monotonic()
+    AmazonAU(Account("a", "amazon_au", "au", "Default")).address_to_review(page, AmzLine())
+    assert _time.monotonic() - start < 20
+    assert "/checkout/p/p-1/address" in page.url   # nothing clicked, fill_shipping then reports the page

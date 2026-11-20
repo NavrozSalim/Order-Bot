@@ -1,6 +1,7 @@
 """Amazon US. Selectors are best-effort; tune with a supervised dry-run."""
 import logging
 import re
+import time
 from datetime import date
 from decimal import Decimal
 
@@ -107,31 +108,46 @@ class Amazon(Vendor):
             waited += 1000
 
     def address_to_review(self, page, line):
-        """From the list of saved addresses to the review page: the customer's address, then payment."""
-        # The new checkout (/checkout/p/.../address) draws the list a few seconds after the page loads.
-        step = self.checkout_step(page)
-        log.info("      checkout page: %s", step or "not recognised yet")
-        if step == "address":
-            # Back on the list of saved addresses: tick the customer's one before "Deliver to this address".
-            picked, more = False, False
-            for i in range(8):  # the new address can take a moment to show in the list
-                picked = self.select_customer_address(page, line)
-                if picked:
-                    break
-                if i >= 2 and not more:  # older addresses are folded away
-                    more = click_optional(page, SHOW_MORE_ADDRESSES, 1500)
-                    continue
-                page.wait_for_timeout(1500)
-            if not picked:
-                raise VendorError("the customer's address is not in Amazon's address list; not ordered; "
-                                  "list shows: " + _address_list(page))
-            log.info("      click Deliver to this address")
-            click_optional(page, DELIVER_HERE, 4000)
-            step = self.checkout_step(page)
-        if step != "review":
-            click_optional(page, PAYMENT_CONTINUE, 4000)
-            click_optional(page, _btn("Continue"), 3000)
+        """From the list of saved addresses to the review page: the customer's address, then payment.
+
+        The page is read again and again (up to CHECKOUT_PAGE_WAIT_MS) until "Place your order" shows: after
+        Amazon's error page the address list can take longer than one look (ADDRESS_LIST_WAIT_MS) to draw, and
+        a single look left the run stuck on the address page.
+        """
+        end = time.monotonic() + CHECKOUT_PAGE_WAIT_MS / 1000
+        rounds = 0
+        while not on_checkout_error(page):   # the error page is handled by recover_checkout_error
+            left_ms = max(0, int((end - time.monotonic()) * 1000))
+            step = self.checkout_step(page, min(ADDRESS_LIST_WAIT_MS, left_ms))
+            log.info("      checkout page: %s", step or "not recognised yet")
+            if step == "review" or rounds >= CHECKOUT_PAGE_ROUNDS or time.monotonic() >= end:
+                break
+            rounds += 1
+            if step == "address":
+                self.deliver_to_customer(page, line)
+            elif step == "payment":
+                click_optional(page, PAYMENT_CONTINUE, 4000)
+            elif not click_optional(page, _btn("Continue"), 2000):
+                page.wait_for_timeout(2000)   # still drawing: look again
+            self.guard(page)
         self.guard(page)
+
+    def deliver_to_customer(self, page, line):
+        """On the list of saved addresses: tick the customer's one, then "Deliver to this address"."""
+        picked, more = False, False
+        for i in range(8):  # the new address can take a moment to show in the list
+            picked = self.select_customer_address(page, line)
+            if picked:
+                break
+            if i >= 2 and not more:  # older addresses are folded away
+                more = click_optional(page, SHOW_MORE_ADDRESSES, 1500)
+                continue
+            page.wait_for_timeout(1500)
+        if not picked:
+            raise VendorError("the customer's address is not in Amazon's address list; not ordered; "
+                              "list shows: " + _address_list(page))
+        log.info("      click Deliver to this address")
+        click_optional(page, DELIVER_HERE, 4000)
 
     def recover_checkout_error(self, page, line):
         """Amazon's own "Something went wrong" checkout page (/gp/buy/.../error.html, no buttons) comes and goes.
@@ -459,6 +475,9 @@ class Amazon(Vendor):
 
 # How long the address / payment / review step may take to draw after "Proceed to checkout".
 ADDRESS_LIST_WAIT_MS = 15000
+# Address list -> review page: keep reading the checkout page this long / this many steps.
+CHECKOUT_PAGE_WAIT_MS = 60000
+CHECKOUT_PAGE_ROUNDS = 6
 PROCEED_TO_CHECKOUT = ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",
                        "a:has-text('Proceed to checkout')"]
 # Amazon's "Something went wrong" page during checkout, e.g. /gp/buy/payselect/handlers/error.html.
