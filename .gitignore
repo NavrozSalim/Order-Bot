@@ -12,3 +12,4 @@ __pycache__/
 agent.json
 work/
 portals.json
+logs/

@@ -129,6 +129,16 @@ The Auto Order Bot page does not start the bot on the web server. It queues the 
 3. Double-click `run_agent.bat` and leave it open. Chrome opens on this laptop when a run starts.
 4. In the web app: upload the order file (new each day) and the mapping, pick the account, then Dry run or Place orders.
 
+**The agent window shows every step.** While a run goes, the window prints the bot's steps as they happen
+(`| ---- line 1 of 3: order ... sku ...`, `open product`, `set delivery postcode`, `read stock`, `add to cart`,
+`click Proceed to checkout`, `checkout: delivery option`, `place order` ...). When a line fails it says the step and the
+code line: `FAILED at step 'add to cart': VendorError: could not find: ... [vendors/amazon.py:512 in add_to_cart]`.
+After each run a box gives the exit code, what it means (0 finished, 1 the bot stopped or was killed, 2 file refused,
+3 Chrome did not start, 4 unexpected error) and every line's outcome. "ACTION NEEDED ON THIS LAPTOP" means the bot
+waits for you (sign-in, captcha). If the agent itself crashes it prints `AGENT CRASHED` with the error, and
+`run_agent.bat` shows the exit code and restarts it after 30 s. Everything the window shows is also saved in
+`logs\agent-<date>.log` (kept 14 days), so the reason is there even after the window was closed.
+
 **SoftEther VPN.** When `run_agent.bat` starts, the agent connects the SoftEther VPN Client connection `AU-OLD`
 (`vpncmd localhost /CLIENT /CMD AccountConnect AU-OLD`) and waits until the laptop's public IP is `103.100.38.134`.
 Before every job (Fetch, Process, Recheck order ID, Dry run) it checks the public IP again; on any other IP the job is

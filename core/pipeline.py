@@ -3,6 +3,7 @@ import argparse
 import logging
 import re
 import sys
+import traceback
 from pathlib import Path
 
 from . import results as R
@@ -60,6 +61,33 @@ class _LazySession:
             self.session.__exit__(None, None, None)
 
 
+class _Steps:
+    """Says each step of a line on the agent's console and in the run log; remembers the step a failure was in."""
+
+    def __init__(self):
+        self.now = ""
+
+    def __call__(self, what, detail=""):
+        self.now = what
+        log.info("    %s%s", what, f": {detail}" if detail != "" else "")
+
+
+def _where(e):
+    """'vendors/amazon.py:512 in fill_shipping': the bot's own code line the error came from."""
+    for fr in reversed(traceback.extract_tb(e.__traceback__)):
+        f = fr.filename.replace("\\", "/")
+        for part in ("/vendors/", "/core/"):
+            if part in f:
+                return f"{part[1:]}{f.split(part)[-1]}:{fr.lineno} in {fr.name}"
+    return ""
+
+
+def _failed(at, e):
+    where = _where(e)
+    log.info("    FAILED at step '%s': %s: %s%s", at.now or "start", type(e).__name__, str(e)[:500],
+             f"  [{where}]" if where else "")
+
+
 def _result(line, status, entry=None, stock="", number="", error="", shot="", delivery=None):
     res = R.LineResult(line.order_id, line.sku, line.buy_qty, entry.vendor if entry else "",
                        entry.url if entry else "", stock, status, number, error, shot)
@@ -89,12 +117,14 @@ def _profit_problem(entry, delivery):
 
 
 def process_lines(lines, mapping, account, vendor, store, place, lazy, lookup=False):
-    for line in lines:
+    for n, line in enumerate(lines, 1):
+        log.info("---- line %d of %d: order %s sku %s qty %s", n, len(lines), line.order_id, line.sku,
+                 getattr(line, "buy_qty", ""))
         res = (_lookup(line, mapping, vendor, lazy) if lookup
                else _process(line, mapping, account, vendor, store, place, lazy))
         store.record(res)
         store.flush(lines)
-        log.info("order %s sku %s -> %s%s", line.order_id, line.sku, res.status,
+        log.info("order %s sku %s -> %s%s", line.order_id, line.sku, str(res.status).upper(),
                  f" ({res.error})" if res.error else "")
 
 
@@ -103,10 +133,14 @@ def _lookup(line, mapping, vendor, lazy):
     entry = mapping.get(sku_key(line.sku))
     if entry is None:
         return _result(line, R.UNMAPPED)
+    at = _Steps()
+    at("start Chrome")
     session = lazy.get()
     page = session.new_page()
     try:
+        at("open product", entry.url)
         vendor.open_product(page, entry.url)
+        at("find the order in the vendor's order list")
         number = vendor.find_order_number(page, line)
         if number:
             return _result(line, R.ORDER_FOUND, entry, number=number)
@@ -115,6 +149,7 @@ def _lookup(line, mapping, vendor, lazy):
     except NotImplementedError:
         return _result(line, R.ORDER_NOT_FOUND, entry, error=f"Recheck order ID is not available for {entry.vendor}")
     except Exception as e:
+        _failed(at, e)
         return _result(line, R.ORDER_NOT_FOUND, entry, error=f"{type(e).__name__}: {e}"[:300])
     finally:
         try:
@@ -138,14 +173,21 @@ def _process(line, mapping, account, vendor, store, place, lazy):
     except Exception as e:
         return _result(line, R.FAILED, entry, error=str(e))
 
+    at = _Steps()
+    at("start Chrome", account.name)
     session = lazy.get()  # BrowserStartError aborts the whole run
     page = session.new_page()
     stock, shot_base = "", store.screens / f"{_slug(line.order_id)}_{_slug(line.sku)}"
     try:
+        at("open product", entry.url)
         vendor.open_product(page, entry.url)
+        at("set delivery postcode", getattr(line, "postcode", ""))
         vendor.set_delivery_postcode(page, line)  # stock / price / delivery for the customer's postcode
+        at("select variant", entry.vendor_sku or "-")
         vendor.select_variant(page, entry.vendor_sku)
+        at("read stock")
         stock = vendor.read_stock(page)
+        log.info("      stock: %s", stock)
         if stock is None:
             return _result(line, R.STOCK_UNKNOWN, entry, "", error="page shows no stock number",
                            shot=session.screenshot(page, f"{shot_base}_stock_unknown.png"))
@@ -153,7 +195,9 @@ def _process(line, mapping, account, vendor, store, place, lazy):
             return _result(line, R.OUT_OF_STOCK, entry, stock, error=f"need {line.buy_qty}")
         if entry.max_price is not None:
             # Auto Purchasing price guard: never pay more than the price the web app checked.
+            at("read price")
             price = vendor.read_price(page)
+            log.info("      price: %s (Max Price %s)", price, entry.max_price)
             if price is None:
                 return _result(line, R.FAILED, entry, stock,
                                error=f"price not readable on the page; not bought (Max Price {entry.max_price})",
@@ -161,28 +205,42 @@ def _process(line, mapping, account, vendor, store, place, lazy):
             if price > entry.max_price:
                 return _result(line, R.PRICE_CHANGED, entry, stock,
                                error=f"vendor price {price} is above the checked price {entry.max_price}")
+        at("check vendor SKU on the page")
         vendor.check_sku(page, entry.vendor_sku)
+        at("clear cart")
         vendor.clear_cart(page)
+        at("open product again")
         vendor.open_product(page, entry.url)
         vendor.select_variant(page, entry.vendor_sku)
+        at("set quantity", line.buy_qty)
         vendor.set_quantity(page, line.buy_qty)
+        at("add to cart")
         vendor.add_to_cart(page)
+        at("checkout: shipping address")
         vendor.fill_shipping(page, line)
         # Checkout: delivery option by the day rules, packaging, then the Order Total against Max Total.
+        at("checkout: delivery option")
         delivery = vendor.choose_delivery(page, line) or {}
+        if delivery:
+            log.info("      delivery: %s", delivery.get("reason") or delivery.get("text") or delivery.get("date"))
         if delivery.get("too_late"):
             return _result(line, R.DELIVERY_TOO_LATE, entry, stock, error=f"not bought: {delivery['reason']}",
                            shot=session.screenshot(page, f"{shot_base}_delivery_late.png"), delivery=delivery)
         if vendor.reads_checkout_total:
+            at("checkout: read Order Total")
             delivery["checkout_total"] = vendor.read_checkout_total(page)
+            log.info("      order total: %s (Max Total %s)", delivery["checkout_total"], entry.max_total)
             problem = _profit_problem(entry, delivery)
             if problem:
                 status = R.FAILED if delivery["checkout_total"] is None else R.LOSS_AFTER_DELIVERY
                 return _result(line, status, entry, stock, error=problem,
                                shot=session.screenshot(page, f"{shot_base}_loss.png"), delivery=delivery)
         if not place:
+            log.info("    dry run: stopped before Place your order")
             return _result(line, R.READY, entry, stock, delivery=delivery)
+        at("place order")
         vendor.submit_order(page)
+        at("read order number")
         try:
             number = vendor.read_order_number(page)
         except Exception:
@@ -194,6 +252,7 @@ def _process(line, mapping, account, vendor, store, place, lazy):
                        error="order placed but number not read; check the vendor account",
                        shot=session.screenshot(page, f"{shot_base}_unread.png"), delivery=delivery)
     except Exception as e:
+        _failed(at, e)
         return _result(line, R.FAILED, entry, stock, error=f"{type(e).__name__}: {e}"[:300],
                        shot=session.screenshot(page, f"{shot_base}_failed.png"))
     finally:
@@ -234,8 +293,17 @@ def main(region_key, argv=None, *, session_factory=None, vendor_factory=None):
         process_lines(lines, mapping, account, vendor_factory(account), store, args.place and not args.lookup_orders,
                       lazy, lookup=args.lookup_orders)
     except BrowserStartError as e:
-        log.info("stopped: %s", e)
+        log.info("STOPPED: Chrome did not start: %s", e)
         code = 3
+    except Exception as e:  # anything else: say it in the log (sent to the web app) before the run ends
+        where = _where(e)
+        log.info("STOPPED: unexpected error %s: %s%s", type(e).__name__, e, f"  [{where}]" if where else "")
+        log.info("%s", traceback.format_exc().rstrip())
+        code = 4
     finally:
-        lazy.close()
+        try:
+            lazy.close()
+        except Exception as e:
+            log.info("closing Chrome failed: %s: %s", type(e).__name__, e)
+    log.info("run finished, exit code %d", code)
     return code

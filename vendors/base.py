@@ -3,6 +3,7 @@
 The bot never solves captchas or 2FA. When one shows up the line fails and the run goes on.
 Selectors in the vendor modules are best-effort starting points and need a supervised dry-run per vendor.
 """
+import logging
 import random
 import re
 
@@ -10,6 +11,9 @@ from core.address import AU_STATES, VALID_STATE_CODES, is_po_box, state_name
 from core.price import parse_price
 from core.attention import wait_for_human
 from core.stock import IN_STOCK_NO_NUMBER, parse_stock
+
+
+log = logging.getLogger("orderbot")
 
 
 class VendorError(Exception):
@@ -68,6 +72,7 @@ NAV_TIMEOUT_MS = 60000
 
 def goto(page, url):
     """Open a page; slow shops (Costway) get 60 s and one retry that only waits for the first response."""
+    log.info("      open %s", str(url).split("?")[0][:150])
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
     except Exception as first:
@@ -233,6 +238,7 @@ def page_buttons(page):
 
 
 def click_required(page, selectors, what, timeout=4000):
+    log.info("      click %s", what)
     loc = find_required(page, selectors, timeout=max(timeout, FIND_WAIT_MS))
     if loc is None:
         raise VendorError(f"could not find: {what} (looked {FIND_TRIES} times); {page_buttons(page)}")
@@ -289,6 +295,7 @@ def type_into(page, loc, value):
 def fill_field(page, selectors, value, what, required=True):
     if value in ("", None) and not required:
         return
+    log.info("      fill %s", what)
     loc = find_required(page, selectors) if required else first_visible(page, selectors)
     if loc is None:
         if required:
