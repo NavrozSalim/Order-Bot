@@ -452,3 +452,29 @@ def test_amazon_adds_new_address_when_every_address_is_kept(page, monkeypatch):
 def test_amazon_without_keep_list_never_edits(page, monkeypatch):
     v, rows = _run_book(page, monkeypatch, [])
     assert v.edited_address == "" and len(rows) == 4 and "Greg Hearne" in rows[1]
+
+
+# Back on the saved-address list after Amazon's error page: the list draws a few seconds late and the
+# customer's address is folded under "Show more addresses".
+LATE_ADDRESS_LIST = """<html><body><h1>Secure checkout</h1><div id="app" style="display:none">
+<div id="rows"><div class="address-row"><input type="radio" name="sel" checked
+ data-q="n=Greg%20Hearne&s=1A%20Lincoln%20Road&c=PORT%20MACQUARIE&p=2444"> Greg Hearne, 1A LINCOLN ROAD, PORT MACQUARIE, NSW, 2444</div></div>
+<a href="#" onclick="showMore();return false">Show more addresses</a>
+""" + a_btn("deliverHere", "Deliver to this address",
+            "location.href='/checkout/p/review?'+document.querySelector('input[name=sel]:checked').dataset.q") + """
+</div><script>
+setTimeout(() => { document.getElementById('app').style.display = 'block'; }, 4000);
+function showMore(){ const r = document.createElement('div'); r.className = 'address-row';
+  r.innerHTML = '<input type=radio name=sel data-q="n=Ange%20N&s=65%20Somerset%20Grove&c=CRAIGMORE&p=5114"> '
+    + 'Ange N, 65 SOMERSET GROVE, CRAIGMORE, SA, 5114, Australia';
+  document.getElementById('rows').appendChild(r); }
+</script></body></html>"""
+
+
+def test_amazon_late_address_list_with_show_more(page):
+    serve(page, {"/checkout/p/p-1/address": LATE_ADDRESS_LIST, "/checkout/p/review": AMZ_REVIEW})
+    page.goto("https://www.amazon.com.au/checkout/p/p-1/address")
+    AmazonAU(Account("a", "amazon_au", "au", "Default")).address_to_review(page, AmzLine())
+    assert "/checkout/p/review" in page.url
+    addr = page.inner_text("#addr")
+    assert "65 SOMERSET GROVE" in addr and "Greg" not in addr

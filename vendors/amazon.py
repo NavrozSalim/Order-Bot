@@ -42,6 +42,7 @@ class Amazon(Vendor):
         self._ship_name = line.ship_name
         self._edit_tried = False
         self.edited_address = ""
+        log.info("      address form")
         self.open_new_address_form(page)
         # Country first and only when it differs: choosing a country redraws the form and clears it.
         self.set_country(page, line)
@@ -49,6 +50,7 @@ class Amazon(Vendor):
         fill_field(page, _inp("enterAddressPhoneNumber"), line.phone, "phone")
         fill_field(page, _inp("enterAddressLine1"), line.address1, "address 1")
         self.pick_suggestion(page, [line.address1[:10]])  # street autocomplete: keep what was typed if none
+        log.info("      address 2 / postcode")
         if line.address2:
             fill_field(page, _inp("enterAddressLine2"), line.address2, "address 2", required=False)
         else:
@@ -60,7 +62,9 @@ class Amazon(Vendor):
         if loc is not None:
             type_into(page, loc, line.postcode)
             settle(page, 2500)  # Amazon loads the suburbs for the postcode
+        log.info("      suburb")
         self.set_suburb(page, line)
+        log.info("      state")
         if not _value(page, STATE_FIELDS):  # Amazon AU sets the state from postcode + suburb
             try:
                 choose_state(page, STATE_FIELDS, line)
@@ -69,34 +73,64 @@ class Amazon(Vendor):
         if loc is None:
             fill_field(page, _inp("enterAddressPostalCode"), line.postcode, "postcode")
         self.refill_cleared(page, line)
+        log.info("      save address (Use this address)")
         self.save_new_address(page)
         if re.search(r"did you mean|suggested address|verify your address", body_text(page), re.I):
             # Amazon suggests a corrected address: keep exactly what the customer entered.
             if not click_optional(page, KEEP_ENTERED_ADDRESS, 4000):
                 raise VendorError("Amazon suggested a different address; not confirmed; " + page_buttons(page))
             settle(page, 2000)
+        log.info("      address list / payment")
         self.address_to_review(page, line)
         self.recover_checkout_error(page, line)
+        log.info("      review page")
         if find_required(page, self.place_selectors) is None:
             raise VendorError("review page with 'Place your order' not reached; " + page_buttons(page))
+        log.info("      check the customer's address on the review page")
         self.confirm_address_shown(page, line)
+
+    def checkout_step(self, page, wait_ms=None):
+        """Which checkout page is showing once it has loaded: "address" (list of saved addresses), "payment",
+        "review" (Place your order) or "" when none appeared within ``wait_ms``."""
+        wait_ms = ADDRESS_LIST_WAIT_MS if wait_ms is None else wait_ms
+        waited = 0
+        while True:
+            if first_visible(page, self.place_selectors, 300) is not None:
+                return "review"
+            if first_visible(page, DELIVER_HERE, 300) is not None:
+                return "address"
+            if first_visible(page, PAYMENT_CONTINUE, 300) is not None:
+                return "payment"
+            if waited >= wait_ms:
+                return ""
+            page.wait_for_timeout(1000)
+            waited += 1000
 
     def address_to_review(self, page, line):
         """From the list of saved addresses to the review page: the customer's address, then payment."""
-        # Back on the list of saved addresses: tick the customer's one before "Deliver to this address".
-        if first_visible(page, _btn("Deliver to this address"), 3000) is not None:
-            picked = False
-            for _ in range(8):  # the new address can take a moment to show in the list
+        # The new checkout (/checkout/p/.../address) draws the list a few seconds after the page loads.
+        step = self.checkout_step(page)
+        log.info("      checkout page: %s", step or "not recognised yet")
+        if step == "address":
+            # Back on the list of saved addresses: tick the customer's one before "Deliver to this address".
+            picked, more = False, False
+            for i in range(8):  # the new address can take a moment to show in the list
                 picked = self.select_customer_address(page, line)
                 if picked:
                     break
+                if i >= 2 and not more:  # older addresses are folded away
+                    more = click_optional(page, SHOW_MORE_ADDRESSES, 1500)
+                    continue
                 page.wait_for_timeout(1500)
             if not picked:
-                raise VendorError("the customer's address is not in Amazon's address list after "
-                                  "'Use this address'; not ordered; list shows: " + _address_list(page))
-            click_optional(page, _btn("Deliver to this address") + ["a:has-text('Deliver to this address')"], 4000)
-        click_optional(page, ["input[name*='SetPaymentPlanSelectContinueEvent']"] + _btn("Use this payment method"), 4000)
-        click_optional(page, _btn("Continue"), 3000)
+                raise VendorError("the customer's address is not in Amazon's address list; not ordered; "
+                                  "list shows: " + _address_list(page))
+            log.info("      click Deliver to this address")
+            click_optional(page, DELIVER_HERE, 4000)
+            step = self.checkout_step(page)
+        if step != "review":
+            click_optional(page, PAYMENT_CONTINUE, 4000)
+            click_optional(page, _btn("Continue"), 3000)
         self.guard(page)
 
     def recover_checkout_error(self, page, line):
@@ -423,6 +457,8 @@ class Amazon(Vendor):
         return None
 
 
+# How long the address / payment / review step may take to draw after "Proceed to checkout".
+ADDRESS_LIST_WAIT_MS = 15000
 PROCEED_TO_CHECKOUT = ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input",
                        "a:has-text('Proceed to checkout')"]
 # Amazon's "Something went wrong" page during checkout, e.g. /gp/buy/payselect/handlers/error.html.
@@ -672,6 +708,13 @@ def _btn(text):
             f"span.a-button:has-text('{t}') input.a-button-input", f"input[type=submit][value='{t}']",
             f"button:text-is('{t}')", f"a.a-button-text:text-is('{t}')", f"[role=button]:text-is('{t}')",
             f"span.a-button-text:text-is('{t}')"]
+
+
+# Found by their text only: the same button ids (checkout-primary-continue-button-id) are reused on the
+# new-address form and the payment page.
+DELIVER_HERE = _btn("Deliver to this address") + ["a:has-text('Deliver to this address')"]
+PAYMENT_CONTINUE = ["input[name*='SetPaymentPlanSelectContinueEvent']"] + _btn("Use this payment method")
+SHOW_MORE_ADDRESSES = _btn("Show more addresses") + ["a:has-text('Show more addresses')"]
 
 
 USE_ADDRESS = ["#address-ui-widgets-form-submit-button input.a-button-input",

@@ -179,6 +179,9 @@ def _process(line, mapping, account, vendor, store, place, lazy):
     page = session.new_page()
     stock, shot_base = "", store.screens / f"{_slug(line.order_id)}_{_slug(line.sku)}"
     try:
+        # Cart emptied first, so the product page is opened only once (it was opened again after the cart).
+        at("clear cart")
+        vendor.clear_cart(page)
         at("open product", entry.url)
         vendor.open_product(page, entry.url)
         at("set delivery postcode", getattr(line, "postcode", ""))
@@ -207,11 +210,6 @@ def _process(line, mapping, account, vendor, store, place, lazy):
                                error=f"vendor price {price} is above the checked price {entry.max_price}")
         at("check vendor SKU on the page")
         vendor.check_sku(page, entry.vendor_sku)
-        at("clear cart")
-        vendor.clear_cart(page)
-        at("open product again")
-        vendor.open_product(page, entry.url)
-        vendor.select_variant(page, entry.vendor_sku)
         at("set quantity", line.buy_qty)
         vendor.set_quantity(page, line.buy_qty)
         at("add to cart")

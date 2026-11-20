@@ -38,8 +38,11 @@ LOGIN_URL_PARTS = ["/ap/signin", "signin.ebay", "/signin", "/sign-in", "/login",
 
 
 # Human pace: pages finish loading, then a short random pause; typing is key by key.
-PAUSE_MIN_MS, PAUSE_MAX_MS = 700, 1600
-TYPE_DELAY_MS = (50, 130)
+PAUSE_MIN_MS, PAUSE_MAX_MS = 400, 900
+TYPE_DELAY_MS = (30, 80)
+# How long settle() waits for every image and script after the page is usable. Buttons and fields are
+# waited for on their own (find_required), so a slow advert or image must not hold up each step.
+LOAD_WAIT_MS = 6000
 FIND_TRIES = 3          # a required button / field is looked for 3 times
 FIND_WAIT_MS = 10000    # each look waits up to 10 s
 
@@ -57,7 +60,7 @@ def settle(page, ms=800):
     except Exception:
         pass
     try:
-        page.wait_for_load_state("load", timeout=15000)  # images and scripts, like a person waiting for the page
+        page.wait_for_load_state("load", timeout=LOAD_WAIT_MS)  # images and scripts, like a person waiting
     except Exception:
         pass
     try:
@@ -131,7 +134,7 @@ def click_loc(page, loc, tries=CLICK_TRIES):
             loc.hover(timeout=3000)
         except Exception:
             pass
-        pause(page, 400, 1100)
+        pause(page, 250, 650)
         try:
             loc.click(timeout=10000)
             return

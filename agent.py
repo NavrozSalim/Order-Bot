@@ -50,7 +50,7 @@ def summary_lines(text, limit=40):
 
 
 def load_config(path=ROOT / "agent.json"):
-    cfg = {"server": "", "token": "", "poll_seconds": 15, "progress_seconds": 20, "python": sys.executable,
+    cfg = {"server": "", "token": "", "poll_seconds": 5, "progress_seconds": 20, "python": sys.executable,
            # SoftEther VPN: connected when the agent starts; jobs run only from this public IP.
            "vpn_account": DEFAULT_ACCOUNT, "vpn_ip": DEFAULT_IP, "vpncmd": ""}
     if Path(path).exists():

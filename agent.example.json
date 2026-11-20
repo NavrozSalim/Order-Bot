@@ -1,7 +1,7 @@
 {
   "server": "https://your-app.example.com",
   "token": "",
-  "poll_seconds": 15,
+  "poll_seconds": 5,
   "progress_seconds": 20,
   "keep_addresses": ["Nisha Sharma", "Piyush Goplani"],
   "vpn_account": "AU-OLD",
