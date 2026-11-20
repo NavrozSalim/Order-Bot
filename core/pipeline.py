@@ -292,6 +292,7 @@ def main(region_key, argv=None, *, session_factory=None, vendor_factory=None):
     try:
         process_lines(lines, mapping, account, vendor_factory(account), store, args.place and not args.lookup_orders,
                       lazy, lookup=args.lookup_orders)
+        store.flush(lines)  # once more at the end, in case the last save found the file busy
     except BrowserStartError as e:
         log.info("STOPPED: Chrome did not start: %s", e)
         code = 3

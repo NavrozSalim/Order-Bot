@@ -173,21 +173,21 @@ class Agent:
 
     @staticmethod
     def _files(out):
-        handles = {}
+        """The result files read into memory: the file is open only for a moment, never during the upload,
+        so the bot can always save its next result (Windows refuses to replace a file that is open)."""
+        files = {}
         for kind, ext in (("done", "xlsx"), ("remaining", "xlsx"), ("log", "txt")):
             for p in out.glob(f"*-{kind}.{ext}"):
-                handles[kind] = open(p, "rb")
-        return handles
+                try:
+                    files[kind] = (p.name, p.read_bytes())
+                except OSError:
+                    pass
+        return files
 
     def _post(self, path, data, out):
-        handles = self._files(out)
-        try:
-            r = self.http.post(self.url(path), headers=self.headers, data=data, files=handles, timeout=120)
-            r.raise_for_status()
-            return r.json()
-        finally:
-            for h in handles.values():
-                h.close()
+        r = self.http.post(self.url(path), headers=self.headers, data=data, files=self._files(out), timeout=120)
+        r.raise_for_status()
+        return r.json()
 
     def _cancelled(self, job):
         try:

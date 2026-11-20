@@ -1,6 +1,7 @@
 """Result rows and the done / remaining workbooks (rewritten after every line)."""
 import logging
 import os
+import time
 from dataclasses import asdict, dataclass, fields
 
 import openpyxl
@@ -56,7 +57,13 @@ def line_key(order_id, sku):
     return (str(order_id).strip(), str(sku).strip().upper())
 
 
-def _write(path, results):
+# The laptop agent reads these files to upload them; Windows refuses to replace a file while it is being read.
+# Wait for that (an upload takes a second or two) instead of leaving an old file behind.
+SAVE_TRIES = 40
+SAVE_WAIT_S = 0.5
+
+
+def _write(path, results, tries=None, wait=None, sleep=time.sleep):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.append(COLUMNS)
@@ -65,10 +72,19 @@ def _write(path, results):
         ws.append([d[c] for c in COLUMNS])
     tmp = path.with_name(path.stem + ".tmp.xlsx")
     wb.save(tmp)
-    try:
-        os.replace(tmp, path)
-    except PermissionError:
-        log.warning("%s is open in another program; will retry after the next line", path.name)
+    tries = SAVE_TRIES if tries is None else tries
+    for attempt in range(tries):
+        try:
+            os.replace(tmp, path)
+            if attempt:
+                log.info("%s saved (it was busy for %.1f s)", path.name, attempt * (SAVE_WAIT_S if wait is None else wait))
+            return True
+        except PermissionError:
+            if attempt + 1 < tries:
+                sleep(SAVE_WAIT_S if wait is None else wait)
+    log.warning("%s is open in another program (waited %d s); NOT SAVED, will retry after the next line",
+                path.name, int(tries * (SAVE_WAIT_S if wait is None else wait)))
+    return False
 
 
 class ResultStore:
@@ -87,12 +103,16 @@ class ResultStore:
         out = {}
         if not self.done_path.exists():
             return out
+        # read_only keeps the file open until close(); an open file cannot be replaced on Windows.
         wb = openpyxl.load_workbook(self.done_path, read_only=True, data_only=True)
-        rows = wb.worksheets[0].iter_rows(values_only=True)
-        header = [str(c or "") for c in next(rows, ())]
+        try:
+            rows = list(wb.worksheets[0].iter_rows(values_only=True))
+        finally:
+            wb.close()
+        header = [str(c or "") for c in (rows[0] if rows else ())]
         if header != COLUMNS and header != BASE_COLUMNS:
             raise ValueError(f"{self.done_path} does not have the expected columns; move it aside")
-        for row in rows:
+        for row in rows[1:]:
             d = dict(zip(header, row))
             num = str(d.get("vendor_order_number") or "").strip()
             if num:
