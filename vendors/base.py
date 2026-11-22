@@ -95,6 +95,27 @@ def body_text(page):
         return ""
 
 
+def wait_visible(page, selectors, max_ms=2500, step_ms=250):
+    """The first visible element of any of ``selectors``, all checked together every ``step_ms`` for up to
+    ``max_ms`` (first_visible waits for each selector in turn, so several missing lists add up)."""
+    waited = 0
+    while True:
+        for sel in selectors:
+            try:
+                loc = page.locator(f"{sel} >> visible=true")
+                if loc.count():
+                    return loc.first
+            except Exception:
+                continue
+        if waited >= max_ms:
+            return None
+        try:
+            page.wait_for_timeout(step_ms)
+        except Exception:
+            return None
+        waited += step_ms
+
+
 def first_visible(page, selectors, timeout=2500):
     for sel in selectors:
         loc = page.locator(sel).first

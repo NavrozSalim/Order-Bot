@@ -70,3 +70,31 @@ def test_failed_step_is_named(caplog):
         with caplog.at_level(logging.INFO, logger="orderbot"):
             pipeline._failed(at, e)
     assert "FAILED at step 'add to cart': ValueError: no button" in caplog.text
+
+
+def test_steps_show_time_taken():
+    import logging
+    from core.pipeline import _Steps
+
+    ticks = iter([100.0, 100.0, 104.5, 110.0])
+    records = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    lg = logging.getLogger("orderbot")
+    h = Grab()
+    lg.addHandler(h)
+    old = lg.level
+    lg.setLevel(logging.INFO)
+    try:
+        at = _Steps(clock=lambda: next(ticks))
+        at("open product", "https://x")
+        at("read stock")
+        at("checkout")
+    finally:
+        lg.removeHandler(h)
+        lg.setLevel(old)
+    assert records[-3:] == ["    open product: https://x", "    read stock (prev 4.5s, total 4s)",
+                            "    checkout (prev 5.5s, total 10s)"]

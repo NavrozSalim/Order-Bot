@@ -133,6 +133,7 @@ def test_suburb_picked_from_dropdown(monkeypatch):
             return "CRAIGMORE option"
         return None
     monkeypatch.setattr(amz, "first_visible", fv)
+    monkeypatch.setattr(amz, "wait_visible", fv)  # the suburb options are waited for with wait_visible
     monkeypatch.setattr(amz, "click_loc", lambda p, loc, tries=3: clicked.append(loc))
     monkeypatch.setattr(amz, "settle", lambda p, ms=0: None)
     vendor().set_suburb(FormPage(), SuburbLine())
@@ -141,6 +142,7 @@ def test_suburb_picked_from_dropdown(monkeypatch):
 
 def test_suburb_not_found_lists_the_form_fields(monkeypatch):
     monkeypatch.setattr(amz, "first_visible", lambda p, sels, timeout=0: None)
+    monkeypatch.setattr(amz, "wait_visible", lambda p, sels, max_ms=0: None)
     monkeypatch.setattr(amz, "settle", lambda p, ms=0: None)
     with pytest.raises(VendorError, match="span#enterAddressCity"):
         vendor().set_suburb(FormPage(), SuburbLine())

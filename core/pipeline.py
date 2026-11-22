@@ -3,6 +3,7 @@ import argparse
 import logging
 import re
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -64,12 +65,17 @@ class _LazySession:
 class _Steps:
     """Says each step of a line on the agent's console and in the run log; remembers the step a failure was in."""
 
-    def __init__(self):
+    def __init__(self, clock=time.monotonic):
         self.now = ""
+        self.clock = clock
+        self.start = self.last = clock()
 
     def __call__(self, what, detail=""):
-        self.now = what
-        log.info("    %s%s", what, f": {detail}" if detail != "" else "")
+        """Log the step with the seconds the previous step took and the line's time so far."""
+        t = self.clock()
+        took = f" (prev {t - self.last:.1f}s, total {t - self.start:.0f}s)" if self.now else ""
+        self.now, self.last = what, t
+        log.info("    %s%s%s", what, f": {detail}" if detail != "" else "", took)
 
 
 def _where(e):
@@ -120,12 +126,13 @@ def process_lines(lines, mapping, account, vendor, store, place, lazy, lookup=Fa
     for n, line in enumerate(lines, 1):
         log.info("---- line %d of %d: order %s sku %s qty %s", n, len(lines), line.order_id, line.sku,
                  getattr(line, "buy_qty", ""))
+        began = time.monotonic()
         res = (_lookup(line, mapping, vendor, lazy) if lookup
                else _process(line, mapping, account, vendor, store, place, lazy))
         store.record(res)
         store.flush(lines)
-        log.info("order %s sku %s -> %s%s", line.order_id, line.sku, str(res.status).upper(),
-                 f" ({res.error})" if res.error else "")
+        log.info("order %s sku %s -> %s%s  [line took %.0fs]", line.order_id, line.sku, str(res.status).upper(),
+                 f" ({res.error})" if res.error else "", time.monotonic() - began)
 
 
 def _lookup(line, mapping, vendor, lazy):

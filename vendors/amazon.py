@@ -10,7 +10,7 @@ from core.address import split_name
 from core.price import parse_price
 from .base import (goto, click_loc, scroll_to, type_into, Vendor, VendorError, body_text, choose_state, click_optional,
                    click_required, fill_field,
-                   address_keys, find_required, first_visible, page_buttons, settle)
+                   address_keys, find_required, first_visible, page_buttons, settle, wait_visible)
 
 log = logging.getLogger("orderbot")
 
@@ -62,7 +62,7 @@ class Amazon(Vendor):
         loc = first_visible(page, _inp("enterAddressPostalCode"), 5000)
         if loc is not None:
             type_into(page, loc, line.postcode)
-            settle(page, 2500)  # Amazon loads the suburbs for the postcode
+            settle(page, 1200)  # Amazon loads the suburbs for the postcode (set_suburb waits for the list)
         log.info("      suburb")
         self.set_suburb(page, line)
         log.info("      state")
@@ -204,13 +204,13 @@ class Amazon(Vendor):
             if first_visible(page, [ADDRESS_NAME_FIELD], 2000) is not None:
                 return
             if self.edit_old_address(page):  # reuse an old customer's address instead of adding one
-                settle(page, 1500)
+                settle(page, 800)
                 continue
             if click_optional(page, ADD_ADDRESS_LINKS, 2500):
-                settle(page, 1500)
+                settle(page, 800)
                 continue
             if click_optional(page, CHANGE_ADDRESS_LINKS, 1500):
-                settle(page, 1500)
+                settle(page, 800)
                 continue
             if click_optional(page, INTERSTITIAL_CONTINUE, 2500):
                 settle(page, 2000)
@@ -255,11 +255,11 @@ class Amazon(Vendor):
                 raise VendorError("could not find: Use this address; " + page_buttons(page))
             scroll_to(btn)
             click_loc(page, btn)
-            for _ in range(15):
+            for _ in range(30):
                 if first_visible(page, [ADDRESS_NAME_FIELD], 300) is None:
-                    settle(page, 1500)
+                    settle(page, 600)  # the next step waits for the address list / payment page itself
                     return
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(500)
         problems = _form_alerts(page)
         raise VendorError("'Use this address' did not save the address"
                           + (f"; Amazon says: {problems}" if problems else "") + "; " + _form_fields(page))
@@ -273,7 +273,7 @@ class Amazon(Vendor):
         except Exception:
             return False
         if ok:
-            settle(page, 1000)
+            settle(page, 600)
         return bool(ok)
 
     def set_suburb(self, page, line):
@@ -289,11 +289,11 @@ class Amazon(Vendor):
             if prompt is not None:
                 try:
                     click_loc(page, prompt)
-                    settle(page, 800)
-                    opt = first_visible(page, _suburb_options(city), 4000)
+                    settle(page, 300)
+                    opt = wait_visible(page, _suburb_options(city), 4000)
                     if opt is not None:
                         click_loc(page, opt)
-                        settle(page, 1000)
+                        settle(page, 500)
                         return
                     click_loc(page, prompt)  # close the list again (not Escape: it closes the address form)
                 except Exception:
@@ -319,14 +319,14 @@ class Amazon(Vendor):
                 if t:
                     sel += f":has-text('{t}')"
             sels.append(sel)
-        opt = first_visible(page, sels, 2500)
+        opt = wait_visible(page, sels, 2500)  # all list kinds checked together: 2.5 s at most, not 2.5 s each
         if opt is None:
             return False
         try:
             click_loc(page, opt)
         except Exception:
             return False
-        settle(page, 800)
+        settle(page, 400)
         return True
 
     def submit_order(self, page):
@@ -469,7 +469,7 @@ class Amazon(Vendor):
                 number = None
             if number and self.order_re.fullmatch(number):
                 return number
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(3000)
         return None
 
 
