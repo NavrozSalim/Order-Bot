@@ -38,6 +38,7 @@ class Amazon(Vendor):
         goto(page, self.cart_url)
         settle(page)
         self.guard(page)
+        self.check_item_count(page, line, "cart")
         click_required(page, PROCEED_TO_CHECKOUT, "Proceed to checkout")
         self.guard(page)
         self._ship_name = line.ship_name
@@ -89,6 +90,24 @@ class Amazon(Vendor):
             raise VendorError("review page with 'Place your order' not reached; " + page_buttons(page))
         log.info("      check the customer's address on the review page")
         self.confirm_address_shown(page, line)
+        self.check_item_count(page, line, "review page")
+
+    @staticmethod
+    def check_item_count(page, line, where):
+        """Only this order's product, in its quantity: when Amazon shows a number of items ("Subtotal (1 item)",
+        "Items (2)") it must be the quantity bought. Nothing extra (an offer added on "Before you go") is paid for.
+        When Amazon shows no count, nothing is checked here (Max Total still guards the price)."""
+        want = int(getattr(line, "buy_qty", 0) or 0)
+        if want <= 0:
+            return
+        m = ITEM_COUNT_RE.search(body_text(page))
+        if not m:
+            return
+        got = int(m.group(1) or m.group(2))
+        log.info("      %s shows %d item(s), order quantity %d", where, got, want)
+        if got != want:
+            raise VendorError(f"the {where} shows {got} item(s) but this order is for {want}; not ordered "
+                              "(check the purchase account's cart)")
 
     def checkout_step(self, page, wait_ms=None):
         """Which checkout page is showing once it has loaded: "address" (list of saved addresses), "payment",
@@ -125,6 +144,8 @@ class Amazon(Vendor):
             rounds += 1
             if step == "address":
                 self.deliver_to_customer(page, line)
+            elif self.before_you_go(page):
+                pass
             elif step == "payment":
                 click_optional(page, PAYMENT_CONTINUE, 4000)
             elif not click_optional(page, _btn("Continue"), 2000):
@@ -171,6 +192,28 @@ class Amazon(Vendor):
             self.guard(page)
             self.address_to_review(page, line)
 
+    def before_you_go(self, page):
+        """Amazon's "Before you go" page (/checkout/byg/): a carousel of offers, each with "Add to cart", and a
+        Continue button. Clicks only the button whose own text is exactly "Continue" outside the carousel, never an
+        offer. Returns True when it was this page (and Continue was clicked)."""
+        if not BEFORE_YOU_GO_RE.search(page.url or ""):
+            return False
+        log.info("      Before you go page (offers): click Continue")
+        try:
+            found = page.evaluate(_BYG_CONTINUE_JS)
+        except Exception:
+            found = False
+        loc = page.locator("[data-orderbot-continue]").first if found else None
+        if loc is None:
+            raise VendorError("Amazon's 'Before you go' page has no Continue button outside the offers; "
+                              "not ordered; " + page_buttons(page))
+        before = page.url
+        click_loc(page, loc)
+        settle(page, 1000)
+        if page.url == before:
+            page.wait_for_timeout(1500)
+        return True
+
     def edit_old_address(self, page):
         """On the list of saved addresses: click "Edit address" on an old customer's address so the new
         customer's address is typed over it (the account does not fill up with addresses).
@@ -203,6 +246,8 @@ class Amazon(Vendor):
         for _ in range(4):
             if first_visible(page, [ADDRESS_NAME_FIELD], 2000) is not None:
                 return
+            if self.before_you_go(page):
+                continue
             if self.edit_old_address(page):  # reuse an old customer's address instead of adding one
                 settle(page, 800)
                 continue
@@ -340,10 +385,7 @@ class Amazon(Vendor):
         if not want:
             raise VendorError("the order has no postcode; Amazon 'Deliver to' was not set")
         if not _shows_postcode(_glow_text(page), want):
-            click_required(page, GLOW_OPEN, "Deliver to")
-            box = first_visible(page, GLOW_AU_POSTCODE + GLOW_POSTCODE, 8000)
-            if box is None:
-                raise VendorError("Amazon 'Deliver to' postcode box not found; " + _where(page))
+            box = self.open_glow(page)
             au_box = first_visible(page, GLOW_AU_POSTCODE, 500) is not None
             type_into(page, box, want)
             if au_box:
@@ -364,6 +406,26 @@ class Amazon(Vendor):
         said = _buybox_text(page)
         if any(p in said for p in NO_DELIVERY_TEXT):
             raise VendorError(f"Amazon does not deliver this item to {want}: {said[:160]}")
+
+    def open_glow(self, page):
+        """Open "Deliver to" and return its postcode box. A click made before Amazon has set the link up opens
+        nothing, so: up to GLOW_TRIES tries, the page reloaded between them, and from the second try the
+        "Deliver to" link in the buy box first (it opens the same window)."""
+        for attempt in range(1, GLOW_TRIES + 1):
+            log.info("      Deliver to: try %d of %d", attempt, GLOW_TRIES)
+            if attempt > 1:
+                page.reload()
+                settle(page)
+                self.guard(page)
+            opener = first_visible(page, GLOW_OPEN if attempt == 1 else GLOW_OPEN_BUYBOX + GLOW_OPEN, 10000)
+            if opener is None:
+                continue
+            click_loc(page, opener)
+            settle(page, 800)
+            box = first_visible(page, GLOW_AU_POSTCODE + GLOW_POSTCODE, GLOW_BOX_WAIT_MS)
+            if box is not None:
+                return box
+        raise VendorError(f"Amazon 'Deliver to' postcode box not found after {GLOW_TRIES} tries; " + _where(page))
 
     def set_glow_suburb(self, page, line, postcode):
         """Pick the customer's suburb in the "Deliver to" suburb list once Amazon has loaded it for the postcode."""
@@ -558,6 +620,10 @@ def _arriving_text(page):
 
 # "Deliver to" location box at the top of every Amazon page (the "glow" popover).
 GLOW_OPEN = ["#nav-global-location-popover-link", "#glow-ingress-block", "#nav-global-location-slot a"]
+# The "Deliver to ..." link in the buy box: opens the same location window.
+GLOW_OPEN_BUYBOX = ["#contextualIngressPtLink", "#contextualIngressPt a", "#contextualIngressPt"]
+GLOW_TRIES = 3
+GLOW_BOX_WAIT_MS = 8000
 GLOW_TEXT = ["#glow-ingress-line2", "#nav-global-location-slot"]
 GLOW_POSTCODE = ["#GLUXZipUpdateInput", "input[aria-label*='postcode' i]", "input[aria-label*='zip' i]"]
 # Amazon AU: postcode box, then a suburb list for that postcode, then Apply (checked on amazon.com.au).
@@ -642,9 +708,38 @@ ADD_ADDRESS_LINKS = ["#add-new-address-popover-link", "#add-new-address-desktop-
 CHANGE_ADDRESS_LINKS = ["#addressChangeLinkId", "#change-delivery-link", "a[aria-label*='Change delivery address' i]",
                         "#shipaddress a:has-text('Change')", "#deliver-to-address-text ~ a:has-text('Change')"]
 # Pages between the cart and the address step: a "Continue" page and Prime offers.
-INTERSTITIAL_CONTINUE = ["input[value='Continue']", "input[aria-labelledby*='continue' i]", "span:has-text('Continue') input",
-                         "button:text-is('Continue')", "a:text-is('Continue')", ".a-button-text:text-is('Continue')",
-                         "#prime-interstitial-nothanks-button", "a:has-text('No thanks')", "a:has-text('No, thanks')"]
+# Exact text only: "span containing Continue" could be an offer's box with its own "Add to cart" button.
+INTERSTITIAL_CONTINUE = ["input[value='Continue']",
+                         "span.a-button:has(span.a-button-text:text-is('Continue')) input.a-button-input",
+                         "button:text-is('Continue')", "a.a-button-text:text-is('Continue')",
+                         "[role=button]:text-is('Continue')", "span.a-button-text:text-is('Continue')",
+                         "a:text-is('Continue')", "#prime-interstitial-nothanks-button", "a:text-is('No thanks')",
+                         "a:text-is('No, thanks')"]
+# Amazon's "Before you go" page between the cart and checkout: offers to add, and Continue.
+BEFORE_YOU_GO_RE = re.compile(r"/checkout/byg/", re.I)
+# "Subtotal (1 item)", "Subtotal (2 items)", "Items (2):".
+ITEM_COUNT_RE = re.compile(r"Subtotal\s*\((\d+)\s+items?\)|\bItems\s*\((\d+)\)", re.I)
+# Mark the real Continue of "Before you go": a button / link / input whose own label is exactly "Continue",
+# visible, and not inside the offers carousel or an offer's box.
+_BYG_CONTINUE_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const offer = e => !!e.closest('.a-carousel-container, .a-carousel, [class*=carousel i], [id*=carousel i], '
+    + '[data-asin]:not([data-asin=""])');
+  const label = e => {
+    if (e.matches('input.a-button-input')) { const b = e.closest('span.a-button'); return b ? b.innerText : ''; }
+    return e.innerText || e.value || e.getAttribute('aria-label') || '';
+  };
+  document.querySelectorAll('[data-orderbot-continue]').forEach(e => e.removeAttribute('data-orderbot-continue'));
+  for (const e of document.querySelectorAll('input.a-button-input, input[type=submit], button, a, [role=button]')) {
+    if (offer(e) || !/^continue$/i.test(label(e).trim())) continue;
+    const box = e.matches('input.a-button-input') ? (e.closest('span.a-button') || e) : e;
+    if (!vis(box)) continue;
+    e.setAttribute('data-orderbot-continue', '1');
+    return true;
+  }
+  return false;
+}"""
 
 
 _WHERE_JS = r"""() => {

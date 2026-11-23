@@ -503,3 +503,89 @@ def test_amazon_checkout_page_that_never_draws_stops_in_time(page, monkeypatch):
     AmazonAU(Account("a", "amazon_au", "au", "Default")).address_to_review(page, AmzLine())
     assert _time.monotonic() - start < 20
     assert "/checkout/p/p-1/address" in page.url   # nothing clicked, fill_shipping then reports the page
+
+
+# Amazon's "Before you go" page between the cart and checkout: offers with "Add to cart", and Continue. A box
+# that only *contains* the word Continue ("Continue shopping") holds an offer's Add to cart: it is never clicked.
+AMZ_BYG = ("<html><body><h1>Before you go</h1><p>Customers also bought</p>"
+           "<div class='a-carousel-container'><ol class='a-carousel'>"
+           "<li data-asin='B0FRAMEO'><span class='offer'>Frameo 10.1 Inch WiFi Digital Picture Frame. Continue shopping "
+           + a_btn("add1", "Add to cart", "location.href='/added-offer'") + "</span></li>"
+           "<li data-asin='B0OTHER'>Other offer " + a_btn("add2", "Add to cart", "location.href='/added-offer'") + "</li>"
+           "</ol>" + a_btn("next", "Next page", "") + "</div>"
+           + a_btn("back", "Back to Cart", "location.href='/gp/cart/view.html'")
+           + a_btn("byg-continue", "Continue", "location.href='/checkout/p/address'") + "</body></html>")
+AMZ_CART_TO_BYG = AMZ_CART.replace("/checkout/entry/cart", "/checkout/byg/ref=ox_sc_byg_proceed_defaultCarousel")
+
+
+def test_amazon_before_you_go_page_clicks_continue_not_add_to_cart(page):
+    serve(page, {"/gp/cart/view.html": AMZ_CART_TO_BYG, "/checkout/byg/": AMZ_BYG, "/checkout/p/address": AMZ_CHECKOUT,
+                 "/checkout/p/review": AMZ_REVIEW, "/added-offer": "<html><body>Added to cart</body></html>"})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    v.fill_shipping(page, AmzLine())
+    assert "/checkout/p/review" in page.url
+    assert "CRAIGMORE" in page.inner_text("#addr")
+
+
+def test_amazon_old_loose_continue_rule_is_gone():
+    assert "span:has-text('Continue') input" not in amz.INTERSTITIAL_CONTINUE
+    assert all("has-text('Continue')" not in s for s in amz.INTERSTITIAL_CONTINUE)
+
+
+def test_amazon_extra_item_on_the_review_page_is_not_ordered(page):
+    extra = AMZ_REVIEW.replace("<h1>Review your order</h1>", "<h1>Review your order</h1><p>Items (2): $107.98</p>")
+
+    class OneItem(AmzLine):
+        buy_qty = 1
+
+    serve(page, {"/gp/cart/view.html": AMZ_CART, "/checkout/entry/cart": AMZ_CONTINUE, "/checkout/p/address": AMZ_CHECKOUT,
+                 "/checkout/p/review": extra})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    with pytest.raises(base.VendorError, match="shows 2 item"):
+        v.fill_shipping(page, OneItem())
+
+
+def test_amazon_cart_with_another_item_is_not_checked_out(page):
+    cart = AMZ_CART.replace("<h1>Shopping Cart</h1>", "<h1>Shopping Cart</h1><p>Subtotal (2 items): $40.00</p>")
+
+    class OneItem(AmzLine):
+        buy_qty = 1
+
+    serve(page, {"/gp/cart/view.html": cart})
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    with pytest.raises(base.VendorError, match="cart shows 2 item"):
+        v.fill_shipping(page, OneItem())
+
+
+# "Deliver to" on the product page: the first click (made before Amazon has set the link up) opens nothing; the
+# click after a reload, on the buy box's "Deliver to" link, opens the location window with the postcode box.
+AMZ_PRODUCT_SLOW_GLOW = """<html><body>
+<div id="nav-global-location-slot"><a id="nav-global-location-popover-link" href="#" onclick="tap();return false">
+<span id="glow-ingress-line2">Parramatta 2150</span></a></div>
+<div id="rightCol"><a id="contextualIngressPtLink" href="#" onclick="tap();return false">Deliver to Navroz - Parramatta 2150</a></div>
+<div id="glow" style="display:none"><input id="GLUXPostalCodeWithCity_PostalCodeInput"></div>
+<script>
+function tap(){ const n = Number(sessionStorage.getItem('glowTaps') || 0) + 1; sessionStorage.setItem('glowTaps', n);
+  if (n >= 2) document.getElementById('glow').style.display = 'block'; }
+</script></body></html>"""
+
+
+def test_amazon_deliver_to_window_that_opens_on_the_second_try(page, monkeypatch):
+    monkeypatch.setattr(amz, "GLOW_BOX_WAIT_MS", 1500)
+    serve(page, {"/dp/B0CGZVHXQM": AMZ_PRODUCT_SLOW_GLOW})
+    page.goto("https://www.amazon.com.au/dp/B0CGZVHXQM")
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    box = v.open_glow(page)
+    assert box is not None and box.get_attribute("id") == "GLUXPostalCodeWithCity_PostalCodeInput"
+    assert page.evaluate("sessionStorage.getItem('glowTaps')") == "2"
+
+
+def test_amazon_deliver_to_window_that_never_opens_stops_after_three_tries(page, monkeypatch):
+    monkeypatch.setattr(amz, "GLOW_BOX_WAIT_MS", 500)
+    never = AMZ_PRODUCT_SLOW_GLOW.replace("if (n >= 2)", "if (n >= 99)")
+    serve(page, {"/dp/B0CGZVHXQM": never})
+    page.goto("https://www.amazon.com.au/dp/B0CGZVHXQM")
+    v = AmazonAU(Account("a", "amazon_au", "au", "Default"))
+    with pytest.raises(base.VendorError, match="not found after 3 tries"):
+        v.open_glow(page)
+    assert page.evaluate("sessionStorage.getItem('glowTaps')") == "3"
