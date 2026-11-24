@@ -11,16 +11,26 @@ Checked on the live site (Nov 2026):
   cards; "New Address" opens the same form.
 
 The purchase runs in the purchase account's signed-in Chrome profile; that account's email is used.
+
+Checkout: the customer's address as the shipping address, always "Standard Shipping" (never Local Collection),
+payment "Credit Card" with "My billing and shipping address are the same" unticked (the billing address stays the
+account's default), the card typed from ORDERBOT_CARD_* (core/card.py), then Place Order and the order number
+from the success page. The card is typed only when the order is placed (--place), right before Place Order.
 """
+import logging
 import re
+import time
 
 from core.address import split_name
+from core.attention import notify
+from core.card import CardError, load_card
 from core.stock import IN_STOCK_NO_NUMBER
 from .base import (goto, ChallengeError, Vendor, VendorError, body_text, click_loc, choose_state, click_optional, click_required, fill_field,
                    first_visible, settle)
 
 
 CHECKOUT_URL = "https://au.costway.com/checkout/"
+log = logging.getLogger("orderbot")
 
 
 class CostwayAU(Vendor):
@@ -93,6 +103,7 @@ class CostwayAU(Vendor):
             raise VendorError(f"vendor SKU {vendor_sku!r} not found on product page")
 
     def fill_shipping(self, page, line):
+        self.card_on_page = False
         goto(page, self.cart_url)
         settle(page)
         self.guard(page)
@@ -134,7 +145,7 @@ class CostwayAU(Vendor):
         self.choose_shipping_method(page)
         self.next_to_payment(page)
         self.guard(page)
-        self.choose_paypal(page)
+        self.choose_card_payment(page)
 
     def check_selected_address(self, page, line):
         """With saved addresses, the selected card must be the customer's (postcode and street).
@@ -177,28 +188,25 @@ class CostwayAU(Vendor):
                           "not checked out")
 
     def choose_shipping_method(self, page):
-        """Wait for the delivery options of the new address and pick one when none is picked."""
-        radios = ["#checkout-shipping-method-load input[type=radio]", "table.table-checkout-shipping-method input[type=radio]"]
-        for _ in range(15):
+        """Always "Standard Shipping": wait for the delivery options of the address and tick it. Never "Local
+        Collection (Warehouse Pickup)" or any other option. Stops when Standard Shipping is not offered."""
+        for _ in range(20):
             try:
-                if page.locator("#checkout-shipping-method-load input[type=radio]:checked, "
-                                "table.table-checkout-shipping-method input[type=radio]:checked").count():
-                    return
+                state = page.evaluate(_STANDARD_SHIPPING_JS)
             except Exception:
-                pass
-            loc = first_visible(page, radios, 1000)
-            if loc is not None:
-                try:
-                    click_loc(page, loc)
-                except Exception:
-                    pass
-                settle(page, 1000)
+                state = ""
+            if state == "checked":
+                log.info("      shipping: Standard Shipping")
                 return
+            if state == "clicked":
+                settle(page, 1500)
+                continue
             try:
                 page.wait_for_timeout(1000)
             except Exception:
-                pass
-        # Some carts have a single free method with no radio: Next decides.
+                break
+        raise VendorError("'Standard Shipping' is not offered (or could not be ticked) for this address; not ordered; "
+                          + _where(page))
 
     def next_to_payment(self, page):
         """Click Next until the payment step opens (3 tries)."""
@@ -217,47 +225,201 @@ class CostwayAU(Vendor):
         if "#payment" not in (page.url or ""):
             raise VendorError("'Next' did not open the payment step; " + _where(page))
 
-    # ---- payment: PayPal (already linked to the signed-in Costway account) -------------------
-    def choose_paypal(self, page):
-        """Payment step: pick PayPal and make sure "Continue to PayPal" is there. Nothing is paid here."""
-        if first_visible(page, PAYPAL_OPTION, 20000) is None:
-            raise VendorError("payment step with PayPal not reached; " + _where(page))
-        click_required(page, PAYPAL_OPTION, "PayPal payment option")
-        settle(page, 2000)
-        if first_visible(page, CONTINUE_TO_PAYPAL, 10000) is None:
-            raise VendorError("PayPal chosen but 'Continue to PayPal' not shown; " + _where(page))
+    # ---- payment: Credit Card ---------------------------------------------------------------------------
+    card_on_page = False  # True once the card is typed: no screenshot may be taken of the page after that
 
-    def submit_order(self, page):
-        """Only with --place: Continue to PayPal, then Pay on PayPal, then back on Costway's success page.
-
-        Errors before the Pay click fail the line (nothing paid). After the Pay click nothing is raised:
-        the line is recorded as purchased so it can never be bought twice.
-        """
-        self._done_page = page
-        ctx = page.context
-        before = list(ctx.pages)
-        click_required(page, CONTINUE_TO_PAYPAL, "Continue to PayPal")
-        pp = _wait_for_page(ctx, before, page, lambda u: "paypal.com" in u, 60)
-        if pp is None:
-            raise VendorError("PayPal did not open after 'Continue to PayPal'; " + _where(page))
-        settle(pp, 3000)
-        pay = _wait_for_pay_button(pp, PAY_WAIT_SECONDS)
-        if pay is None:
-            raise VendorError(f"PayPal 'Pay' button not shown within {PAY_WAIT_SECONDS}s (nothing was paid); "
-                              + _where(pp))
-        click_loc(pp, pay)  # ---- money moves from here on: never raise below this line
+    def choose_card_payment(self, page):
+        """Payment step: "Credit Card", untick "My billing and shipping address are the same", and check the card
+        boxes are there. Nothing is typed or paid here (the card is typed by submit_order, only with --place)."""
         try:
-            back = _wait_for_page(ctx, [], page, lambda u: "costway.com" in u and "paypal.com" not in u, 120)
-            if back is not None:
-                settle(back, 3000)
-                # Some shops return to a review page with a last "Place Order" button.
-                if "review" in (back.url or "") and first_visible(back, self.place_selectors, 5000) is not None:
-                    click_required(back, self.place_selectors, "Place Order")
-                    settle(back, 5000)
-                _wait_for_page(ctx, [], back, lambda u: "success" in u, 60)
-                self._done_page = _wait_for_page(ctx, [], back, lambda u: "costway.com" in u, 1) or back
+            card = load_card()
+        except CardError as e:
+            raise VendorError(f"{e}; not ordered") from None
+        for _ in range(20):
+            try:
+                state = page.evaluate(_CREDIT_CARD_JS)
+            except Exception:
+                state = ""
+            if state == "checked":
+                break
+            if state == "clicked":
+                settle(page, 1500)
+                continue
+            try:
+                page.wait_for_timeout(1000)
+            except Exception:
+                break
+        else:
+            raise VendorError("payment option 'Credit Card' not found; not ordered; " + _where(page))
+        log.info("      payment: Credit Card (card ending %s)", card.last4)
+        self.untick_billing_same(page)
+        fields = self.card_fields(page)
+        if "number" not in fields:
+            raise VendorError("the card number box is not on the payment step; not ordered; " + _where(page))
+        log.info("      card form: %s", ", ".join(sorted(fields)))
+
+    def untick_billing_same(self, page):
+        """Untick "My billing and shipping address are the same": the shipping address is the customer's, the
+        billing address stays the account's default. Confirms it with Update when Costway asks."""
+        state = ""
+        for _ in range(3):
+            try:
+                state = page.evaluate(_BILLING_SAME_JS)
+            except Exception:
+                state = ""
+            if state in ("unticked", "already", "missing"):
+                break
+            settle(page, 1000)
+        if state == "missing":
+            log.info("      billing: no 'billing and shipping address are the same' box")
+            return
+        if state not in ("unticked", "already"):
+            raise VendorError("could not untick 'My billing and shipping address are the same'; not ordered; "
+                              + _where(page))
+        settle(page, 1500)
+        sel = first_visible(page, BILLING_SELECT, 2000)
+        if sel is not None:
+            try:
+                if not (sel.input_value() or "").strip():  # "New Address" picked: take the default saved one
+                    values = [v for v in sel.evaluate("s => [...s.options].map(o => o.value)") if v]
+                    if values:
+                        sel.select_option(value=values[0])
+            except Exception:
+                pass
+        if click_optional(page, BILLING_UPDATE, 2000):
+            settle(page, 1500)
+        log.info("      billing: own address (not the customer's)")
+
+    @staticmethod
+    def card_fields(page):
+        """{kind: locator} for the card boxes on the page or inside the payment provider's frames."""
+        found = {}
+        frames = list(getattr(page, "frames", None) or [page])
+        for kind, sels in CARD_FIELDS.items():
+            for frame in frames:
+                for sel in sels:
+                    try:
+                        loc = frame.locator(f"{sel} >> visible=true")
+                        if loc.count():
+                            found[kind] = loc.first
+                            break
+                    except Exception:
+                        continue
+                if kind in found:
+                    break
+        return found
+
+    @staticmethod
+    def _type(loc, value):
+        try:
+            loc.click(timeout=5000)
         except Exception:
             pass
+        try:
+            loc.fill("")
+        except Exception:
+            pass
+        loc.press_sequentially(value, delay=60)
+
+    def type_card(self, page, card):
+        """Type the card into its boxes and check each one took it. Never logs the values."""
+        fields = self.card_fields(page)
+        if "number" not in fields:
+            raise VendorError("the card number box is not on the page; nothing paid")
+        self.card_on_page = True
+        self._type(fields["number"], card.number)
+        if "month" in fields and "year" in fields:  # separate month / year lists
+            for kind, values in (("month", [card.month, str(int(card.month))]),
+                                 ("year", ["20" + card.year, card.year])):
+                for v in values:
+                    try:
+                        fields[kind].select_option(value=v)
+                        break
+                    except Exception:
+                        continue
+        elif "expiry" in fields:
+            self._type(fields["expiry"], f"{card.month}/{card.year}")
+        else:
+            raise VendorError("the card expiry box is not on the page; nothing paid")
+        if "cvc" not in fields:
+            raise VendorError("the card security code (CVC) box is not on the page; nothing paid")
+        self._type(fields["cvc"], card.cvc)
+        if "name" in fields and card.name:
+            self._type(fields["name"], card.name)
+        settle(page, 800)
+        problems = []
+        checks = [("number", card.number), ("cvc", card.cvc)]
+        if "expiry" in fields and not ("month" in fields and "year" in fields):
+            checks.append(("expiry", card.month + card.year))
+        for kind, want in checks:
+            try:
+                got = re.sub(r"\D", "", fields[kind].input_value() or "")
+            except Exception:
+                got = ""
+            if got != want:
+                problems.append(kind)
+        if problems:
+            raise VendorError("the card was not taken by the form (" + ", ".join(problems) + "); nothing paid")
+        log.info("      card: typed (ending %s)", card.last4)
+
+    def clear_card(self, page):
+        """Empty the card boxes again (before any screenshot or when the order stops)."""
+        for loc in self.card_fields(page).values():
+            try:
+                loc.fill("")
+            except Exception:
+                pass
+
+    def submit_order(self, page):
+        """Only with --place: type the card, Place Order, then wait for Costway's success page.
+
+        Errors before the Place Order click fail the line (nothing paid; the card boxes are emptied). After the
+        click nothing is raised unless Costway clearly refuses the card: the line is recorded as purchased so it
+        can never be bought twice. A bank check (3-D Secure) is left to the person at the laptop.
+        """
+        self._done_page = page
+        try:
+            card = load_card()
+        except CardError as e:
+            raise VendorError(f"{e}; nothing paid") from None
+        try:
+            self.type_card(page, card)
+            btn = first_visible(page, PLACE_ORDER, 10000)
+            if btn is None:
+                raise VendorError("'Place Order' not found after the card was typed; nothing paid; " + _where(page))
+        except Exception:
+            self.clear_card(page)
+            raise
+        log.info("      click Place Order")
+        click_loc(page, btn)  # ---- money moves from here on
+        refused = ""
+        told = False
+        end = time.monotonic() + PLACE_WAIT_SECONDS
+        while time.monotonic() < end:
+            url = (page.url or "").lower()
+            if "success" in url:
+                break
+            try:
+                text = body_text(page)
+            except Exception:
+                text = ""
+            if CARD_REFUSED_RE.search(text) and "/checkout" in url:
+                refused = CARD_REFUSED_RE.search(text).group(0)
+                break
+            if not told and BANK_CHECK_RE.search(text):
+                notify("Costway card payment: the bank asks to confirm it (3-D Secure) on the laptop")
+                told = True
+            try:
+                page.wait_for_timeout(2000)
+            except Exception:
+                break
+        if told:
+            notify("")
+        if "success" not in (page.url or "").lower():
+            self.clear_card(page)
+        if refused:
+            raise VendorError(f"Costway refused the card payment ({refused}); check the Costway account's orders "
+                              "before pressing Process again")
 
     def read_order_number(self, page):
         target = getattr(self, "_done_page", None) or page
@@ -269,55 +431,71 @@ NEW_ADDRESS_SAVE = [".modal-popup._show button.action-save-address", ".modal-pop
                     ".modal-popup._show button:has-text('Save Address')"]
 NEXT_TO_PAYMENT = ["button[data-role='opc-continue-step']", "#shipping-method-buttons-container button.continue",
                    "button.continue:has-text('Next')", "button:has-text('Next')"]
-PAYPAL_OPTION = ["input#paypal_express", "input[value='paypal_express']", "input[value*='paypal' i]",
-                 "label[for*='paypal' i]", "label:has-text('PayPal')", "text=PayPal"]
-CONTINUE_TO_PAYPAL = ["button:has-text('Continue to PayPal')", "a:has-text('Continue to PayPal')",
-                      "._active button.checkout:has-text('PayPal')", "button:has-text('Continue to Paypal')"]
-PAYPAL_PAY = ["#payment-submit-btn", "[data-id='payment-submit-btn']", "button[data-testid='submit-button-initial']",
-              "button[data-testid*='submit' i]", "button:text-is('Pay')", "button:text-is('Pay Now')",
-              "button:has-text('Complete Purchase')", "button:has-text('Agree and Pay')", "button:has-text('Pay AU$')",
-              "button:has-text('Pay $')"]
-PAY_WAIT_SECONDS = 90
-
-
-def _wait_for_pay_button(pp, seconds):
-    """PayPal loads and reloads its page before the Pay button shows: keep looking (also inside its frames)
-    until the button is visible, enabled and still there a moment later."""
-    signed_out = 0
-    for _ in range(max(1, seconds // 2)):
-        try:
-            pw = pp.locator("input[type=password]:visible").count()
-        except Exception:
-            pw = 0
-        signed_out = signed_out + 1 if pw else 0
-        if signed_out >= 3:  # a login form that stays, not a page in the middle of loading
-            raise ChallengeError("PayPal asks to sign in; sign in to PayPal once in this Chrome profile "
-                                 "(nothing was paid)")
-        if pw:  # never press Pay while a login form is on screen
-            try:
-                pp.wait_for_timeout(2000)
-            except Exception:
-                pass
-            continue
-        for frame in (getattr(pp, "frames", None) or [pp]):
-            try:
-                loc = first_visible(frame, PAYPAL_PAY, 500)
-            except Exception:
-                loc = None
-            if loc is None:
-                continue
-            try:
-                pp.wait_for_timeout(1500)  # let a reload finish: the button must still be there
-                if hasattr(loc, "is_visible") and not (loc.is_visible() and loc.is_enabled()):
-                    continue
-            except Exception:
-                continue
-            return loc
-        try:
-            pp.wait_for_timeout(2000)
-        except Exception:
-            pass
-    return None
+PLACE_ORDER = ["._active button.checkout:has-text('Place Order')", "._active button:has-text('Place Order')",
+               "button.checkout:has-text('Place Order')", "button:has-text('Place Order')"]
+PLACE_WAIT_SECONDS = 180
+BILLING_SELECT = ["._active select[name='billing_address_id']", "select[name='billing_address_id']"]
+BILLING_UPDATE = ["._active button.action-update", "._active button:has-text('Update')", "button.action-update"]
+CARD_REFUSED_RE = re.compile(r"(card[^.\n]{0,60}(declined|refused|invalid|expired|incorrect)|"
+                             r"(declined|refused)[^.\n]{0,40}card|payment[^.\n]{0,20}(failed|declined))", re.I)
+BANK_CHECK_RE = re.compile(r"(3-?d secure|verify (?:your|this) (?:payment|purchase)|one-time (?:password|code)|"
+                           r"enter the code (?:sent|we sent))", re.I)
+# Card boxes on the page or in the payment provider's frames (by what they are for, not by one provider's ids).
+CARD_FIELDS = {
+    "number": ["input[autocomplete='cc-number']", "input[name*='cardnumber' i]", "input[name*='card_number' i]",
+               "input[name*='cc_number' i]", "input[name='number']", "input[id*='card-number' i]",
+               "input[id*='cardNumber' i]", "input[placeholder*='card number' i]", "input[aria-label*='card number' i]"],
+    "expiry": ["input[autocomplete='cc-exp']", "input[name*='expiry' i]", "input[name*='exp-date' i]",
+               "input[name='exp']", "input[placeholder*='MM' i]", "input[aria-label*='expir' i]",
+               "input[id*='expir' i]"],
+    "month": ["select[autocomplete='cc-exp-month']", "select[name*='exp_month' i]", "select[name*='expiry_month' i]"],
+    "year": ["select[autocomplete='cc-exp-year']", "select[name*='exp_year' i]", "select[name*='expiry_year' i]"],
+    "cvc": ["input[autocomplete='cc-csc']", "input[name*='cvc' i]", "input[name*='cvv' i]", "input[name*='cid' i]",
+            "input[name*='security' i]", "input[placeholder*='CVC' i]", "input[placeholder*='CVV' i]",
+            "input[aria-label*='security code' i]", "input[id*='cvc' i]", "input[id*='cvv' i]"],
+    "name": ["input[autocomplete='cc-name']", "input[name*='holder' i]", "input[name*='name_on_card' i]",
+             "input[placeholder*='name on card' i]", "input[aria-label*='name on card' i]"],
+}
+# Delivery option rows: tick the one whose row says "Standard Shipping". 'checked' / 'clicked' / '' (not there).
+_STANDARD_SHIPPING_JS = r"""() => {
+  const radios = [...document.querySelectorAll('#checkout-shipping-method-load input[type=radio], '
+    + 'table.table-checkout-shipping-method input[type=radio], #opc-shipping_method input[type=radio]')];
+  for (const r of radios) {
+    const row = r.closest('tr, li, .row, label, div') || r.parentElement;
+    if (!/standard shipping/i.test(row ? row.innerText : '')) continue;
+    if (r.checked) return 'checked';
+    r.click();
+    return 'clicked';
+  }
+  return '';
+}"""
+# Payment method "Credit Card": 'checked' / 'clicked' / '' (not there yet).
+_CREDIT_CARD_JS = r"""() => {
+  for (const r of document.querySelectorAll('input[type=radio][name="payment[method]"], .payment-method input[type=radio]')) {
+    const box = r.closest('.payment-method') || r.parentElement;
+    const label = (document.querySelector('label[for="' + r.id + '"]') || {}).innerText || (box ? box.innerText : '');
+    if (!/credit card/i.test(label)) continue;
+    if (r.checked) return 'checked';
+    r.click();
+    return 'clicked';
+  }
+  return '';
+}"""
+# "My billing and shipping address are the same": 'unticked' / 'already' (not ticked) / 'missing' / 'stuck'.
+_BILLING_SAME_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const boxes = [...document.querySelectorAll('input[type=checkbox]')].filter(b => {
+    const l = (document.querySelector('label[for="' + b.id + '"]') || b.closest('label') || b.parentElement || {}).innerText || '';
+    return /billing and shipping address(es)? are the same/i.test(l) || /billing-address-same-as-shipping/i.test(b.name || b.id);
+  });
+  const box = boxes.find(b => vis(b) || vis(b.parentElement)) || boxes[0];
+  if (!box) return 'missing';
+  if (!box.checked) return 'already';
+  const label = document.querySelector('label[for="' + box.id + '"]');
+  (vis(box) ? box : (label || box)).click();
+  return box.checked ? 'stuck' : 'unticked';
+}"""
 
 
 def _wait_for_page(ctx, before, page, match, seconds):

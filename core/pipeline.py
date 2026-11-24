@@ -78,6 +78,14 @@ class _Steps:
         log.info("    %s%s%s", what, f": {detail}" if detail != "" else "", took)
 
 
+def _shot(session, vendor, page, name):
+    """A screenshot for the result file, never of a page the purchase card was typed into (Costway)."""
+    if getattr(vendor, "card_on_page", False):
+        log.info("      no screenshot: the card was typed on this page")
+        return ""
+    return session.screenshot(page, name)
+
+
 def _where(e):
     """'vendors/amazon.py:512 in fill_shipping': the bot's own code line the error came from."""
     for fr in reversed(traceback.extract_tb(e.__traceback__)):
@@ -255,11 +263,11 @@ def _process(line, mapping, account, vendor, store, place, lazy):
         # The click went through: record it so a rerun cannot buy the line twice.
         return _result(line, R.PURCHASED, entry, stock, number="UNREAD",
                        error="order placed but number not read; check the vendor account",
-                       shot=session.screenshot(page, f"{shot_base}_unread.png"), delivery=delivery)
+                       shot=_shot(session, vendor, page, f"{shot_base}_unread.png"), delivery=delivery)
     except Exception as e:
         _failed(at, e)
         return _result(line, R.FAILED, entry, stock, error=f"{type(e).__name__}: {e}"[:300],
-                       shot=session.screenshot(page, f"{shot_base}_failed.png"))
+                       shot=_shot(session, vendor, page, f"{shot_base}_failed.png"))
     finally:
         try:
             page.close()

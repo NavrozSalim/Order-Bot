@@ -85,6 +85,26 @@ number `UNREAD` (so a rerun cannot buy it twice) and an error asking you to chec
   empty email box with no account email fails the line.
 * Costco AU / Costway AU refuse PO Box and Parcel Locker addresses. Costco AU only submits an address picked from a
   suggestion that matches suburb and postcode.
+* **Costway AU checkout (card, not PayPal).** The customer's address is added as the shipping address, **Standard
+  Shipping** is always ticked (never Local Collection; no Standard Shipping: not ordered), payment **Credit Card**,
+  "My billing and shipping address are the same" is unticked (the billing address stays the account's default), then
+  the card is typed and **Place Order** is pressed; the order number is read from the success page. The card is typed
+  only when the order is placed, right before Place Order (a dry run stops with the card boxes empty). A card Costway
+  refuses fails the line; a bank check (3-D Secure) waits for the person at the laptop. No screenshot is taken of a
+  page once the card is typed, and the card boxes are emptied when the order stops before paying.
+
+  **Set the card on the bot laptop** (never in the web app, never committed): Windows environment variables, or a
+  `.env` file in the bot folder (ignored by git), then restart the agent:
+
+  ```
+  ORDERBOT_CARD_NUMBER=4111 1111 1111 1111
+  ORDERBOT_CARD_EXPIRY=08/29
+  ORDERBOT_CARD_CVC=123
+  ORDERBOT_CARD_NAME=Name On Card        (only if Costway's card form asks for it)
+  ```
+
+  The values are never logged or shown; the window says "card ending 1111". Not set: the line fails before checkout
+  with the names of the missing variables.
 * **Customer postcode on the product page.** Right after the product page opens, before stock and price are read:
   * Amazon (AU and US): "Deliver to" at the top of the page is set to the customer's postcode (Amazon AU: the postcode,
     then the customer's suburb from Amazon's list for it, then Apply; no matching suburb picks that postcode's first

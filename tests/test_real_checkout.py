@@ -98,10 +98,22 @@ COSTWAY_CHECKOUT = """<html><body><h1>Checkout</h1>
  <div class="message error" id="err" style="display:none">The shipping method is missing.</div>
 </div>
 <div id="payment" style="display:none">
- <div class="payment-method"><input type="radio" name="payment[method]" id="checkmo" value="checkmo"><label for="checkmo">Card</label></div>
- <div class="payment-method" id="ppbox"><input type="radio" name="payment[method]" id="paypal_express" value="paypal_express"
-   onclick="document.getElementById('ppgo').style.display='inline'"><label for="paypal_express">PayPal</label>
-   <button id="ppgo" class="action primary checkout" style="display:none" onclick="location.href='https://www.paypal.com/pay/?token=EC-1'">Continue to PayPal</button></div>
+ <div class="payment-method" id="ppbox"><input type="radio" name="payment[method]" id="paypal_express" value="paypal_express">
+   <label for="paypal_express">PayPal</label></div>
+ <div class="payment-method" id="ccbox"><input type="radio" name="payment[method]" id="cc" value="airwallex_card"
+   onclick="pickCard()"><label for="cc">Credit Card - SECURE, SEAMLESS PAYMENTS</label>
+   <div id="ccform" style="display:none">
+    <input type="checkbox" id="billing-address-same-as-shipping-cc" name="billing-address-same-as-shipping" checked
+      onchange="document.getElementById('billsel').style.display = this.checked ? 'none' : 'block'">
+    <label for="billing-address-same-as-shipping-cc">My billing and shipping address are the same</label>
+    <div id="billsel" style="display:none"><select name="billing_address_id"><option value="11" selected>Piyush Goplani, 46 Stringer Road
+      </option><option value="">New Address</option></select><button class="action action-update" onclick="billed=1">Update</button></div>
+    <iframe id="cardframe" style="width:400px;height:160px" srcdoc="<label>Card number</label><input id=n autocomplete=cc-number
+      oninput=&quot;this.value=this.value.replace(/\\D/g,'').replace(/(\\d{4})(?=\\d)/g,'$1 ')&quot;>
+      <input id=e autocomplete=cc-exp placeholder='MM / YY'><input id=c autocomplete=cc-csc placeholder=CVC>"></iframe>
+    <button class="action primary checkout" onclick="placeOrder()">Place Order</button>
+    <div class="message error" id="payerr" style="display:none"></div>
+   </div></div>
 </div>
 <script>
 function openNew(){ const m = document.getElementById('newaddr'); m.style.display='block'; m.classList.add('_show'); }
@@ -114,7 +126,22 @@ function saveNew(){
   const card = document.createElement('div'); card.className='shipping-address-item selected-item'; card.innerText = text;
   document.getElementById('cards').appendChild(card); closeNew();
   setTimeout(() => { document.getElementById('checkout-shipping-method-load').innerHTML =
-    '<table class="table-checkout-shipping-method"><tr><td><input type="radio" name="ko_unique_1" value="free"></td><td>Free</td></tr></table>'; }, 1200);
+    '<table class="table-checkout-shipping-method">'
+    + '<tr><td><input type="radio" name="ko_unique_1" value="pickup" checked></td><td>$0.00</td><td>Local Collection (Warehouse Pickup)</td></tr>'
+    + '<tr><td><input type="radio" name="ko_unique_1" value="standard"></td><td>$4.99</td><td>Standard Shipping</td></tr>'
+    + '</table>'; }, 1200);
+}
+let billed = 0;
+function pickCard(){ document.getElementById('ccform').style.display='block'; }
+function placeOrder(){
+  const d = document.getElementById('cardframe').contentDocument;
+  const num = d.getElementById('n').value.replace(/\\s/g, ''), exp = d.getElementById('e').value, cvc = d.getElementById('c').value;
+  const same = document.getElementById('billing-address-same-as-shipping-cc').checked;
+  const ship = document.querySelector('#checkout-shipping-method-load input:checked').value;
+  sessionStorage.setItem('order', JSON.stringify({num, exp, cvc, same, ship, billed}));
+  if (num === '4000000000000002') { const e = document.getElementById('payerr'); e.innerText = 'Your card was declined.';
+    e.style.display = 'block'; return; }
+  location.href = 'https://au.costway.com/checkout/onepage/success/';
 }
 function next(){
   if (!document.querySelector('#checkout-shipping-method-load input:checked')) { document.getElementById('err').style.display='block'; return; }
@@ -123,36 +150,67 @@ function next(){
 }
 </script></body></html>"""
 
-PAYPAL = """<html><body><div id="app">Loading PayPal...</div><script>
-if (!sessionStorage.getItem('reloaded')) { sessionStorage.setItem('reloaded', '1'); setTimeout(() => location.reload(), 1500); }
-else { setTimeout(() => { document.getElementById('app').innerHTML =
-  'PayPal - Pay with PayPal <button id="payment-submit-btn" onclick="sessionStorage.setItem(\\'paid\\', (+(sessionStorage.getItem(\\'paid\\')||0)+1)); location.href=\\'https://au.costway.com/checkout/onepage/success/\\'">Pay</button>'; }, 1500); }
-</script></body></html>"""
-
 COSTWAY_SUCCESS = "<html><body>Thank you for your purchase! Your order number is: 4000123456.</body></html>"
 
 
-def test_costway_checkout_and_paypal_end_to_end(page):
-    serve(page, {"au.costway.com/checkout/cart": COSTWAY_CART, "au.costway.com/checkout/onepage/success": COSTWAY_SUCCESS,
-                 "au.costway.com/checkout/": COSTWAY_CHECKOUT, "www.paypal.com/pay": PAYPAL})
+CARD_ENV = {"ORDERBOT_CARD_NUMBER": "4111 1111 1111 1111", "ORDERBOT_CARD_EXPIRY": "08/29", "ORDERBOT_CARD_CVC": "123"}
+
+
+def costway_pages():
+    return {"au.costway.com/checkout/cart": COSTWAY_CART, "au.costway.com/checkout/onepage/success": COSTWAY_SUCCESS,
+            "au.costway.com/checkout/": COSTWAY_CHECKOUT}
+
+
+def card_env(monkeypatch, **over):
+    for k, v in {**CARD_ENV, **over}.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_costway_card_checkout_end_to_end(page, monkeypatch):
+    card_env(monkeypatch)
+    serve(page, costway_pages())
     v = cw.CostwayAU(Account("c", "costway_au", "au", "Profile 1"))
-    line = Line()
-    v.fill_shipping(page, line)  # dry-run stops here: PayPal chosen, Continue to PayPal shown
-    assert "#payment" in page.url and page.is_checked("#paypal_express") and page.is_visible("#ppgo")
+    v.fill_shipping(page, Line())  # dry run stops here: nothing typed into the card boxes
+    assert "#payment" in page.url and page.is_checked("#cc") and not page.is_checked("#paypal_express")
+    assert not page.is_checked("#billing-address-same-as-shipping-cc")
+    assert page.frame_locator("#cardframe").locator("#n").input_value() == "" and not v.card_on_page
     card = page.inner_text(".shipping-address-item.selected-item")
     assert "5 Gresham Street" in card and "2000" in card and "New South Wales" in card
-    v.submit_order(page)  # --place: Continue to PayPal, wait through PayPal's reload, Pay
+    v.submit_order(page)  # --place: type the card, Place Order
     assert v.read_order_number(page) == "4000123456"
+    order = page.evaluate("JSON.parse(sessionStorage.getItem('order'))")
+    assert order == {"num": "4111111111111111", "exp": "08/29", "cvc": "123", "same": False, "ship": "standard",
+                     "billed": 1}
 
 
-def test_costway_paypal_without_pay_button_pays_nothing(page, monkeypatch):
-    monkeypatch.setattr(cw, "PAY_WAIT_SECONDS", 6)
-    serve(page, {"au.costway.com/checkout/cart": COSTWAY_CART, "au.costway.com/checkout/": COSTWAY_CHECKOUT,
-                 "www.paypal.com/pay": "<html><body>PayPal is having trouble</body></html>"})
+def test_costway_without_card_set_stops_before_paying(page, monkeypatch):
+    for k in CARD_ENV:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("core.card.ENV_FILE", __import__("pathlib").Path("no-such.env"))
+    serve(page, costway_pages())
+    v = cw.CostwayAU(Account("c", "costway_au", "au", "Profile 1"))
+    with pytest.raises(base.VendorError, match="ORDERBOT_CARD_NUMBER"):
+        v.fill_shipping(page, Line())
+
+
+def test_costway_refused_card_is_not_recorded_and_boxes_are_emptied(page, monkeypatch):
+    card_env(monkeypatch, ORDERBOT_CARD_NUMBER="4000000000000002")
+    monkeypatch.setattr(cw, "PLACE_WAIT_SECONDS", 10)
+    serve(page, costway_pages())
     v = cw.CostwayAU(Account("c", "costway_au", "au", "Profile 1"))
     v.fill_shipping(page, Line())
-    with pytest.raises(base.VendorError, match="nothing was paid"):
+    with pytest.raises(base.VendorError, match="refused the card"):
         v.submit_order(page)
+    assert page.frame_locator("#cardframe").locator("#n").input_value() == ""
+
+
+def test_costway_without_standard_shipping_is_not_ordered(page, monkeypatch):
+    card_env(monkeypatch)
+    no_standard = COSTWAY_CHECKOUT.replace("Standard Shipping", "Express Shipping")
+    serve(page, {**costway_pages(), "au.costway.com/checkout/": no_standard})
+    v = cw.CostwayAU(Account("c", "costway_au", "au", "Profile 1"))
+    with pytest.raises(base.VendorError, match="Standard Shipping"):
+        v.fill_shipping(page, Line())
 
 
 def test_costway_cart_with_two_products_is_not_checked_out(page):

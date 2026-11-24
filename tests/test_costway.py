@@ -145,76 +145,6 @@ def test_click_retries_three_times_then_script_click():
         click_loc(QuietPage(), FlakyLoc(fails=99, js_ok=False))
 
 
-class PPPage:
-    """Costway tab that turns into PayPal after 'Continue to PayPal', then back to Costway success after 'Pay'."""
-
-    def __init__(self, login=False, pay_button=True):
-        self.url, self.login, self.pay_button, self.clicked = "https://au.costway.com/checkout/#payment", login, pay_button, []
-        self.context = type("Ctx", (), {"pages": [self]})()
-
-    def locator(self, sel):
-        page = self
-
-        class L:
-            def count(self_inner):
-                return 1 if (page.login and "password" in sel) else 0
-        return L()
-
-    def wait_for_timeout(self, ms):
-        pass
-
-    def inner_text(self, sel="body"):
-        return "Thank you. Your order number is: 4000123456" if "success" in self.url else ""
-
-
-def _patch(monkeypatch, page):
-    import vendors.costway_au as cw
-
-    def fv(p, sels, timeout=0):
-        if sels is cw.PAYPAL_PAY:
-            return "pay" if p.pay_button and "paypal.com" in p.url else None
-        return None
-
-    def click_required(p, sels, what, timeout=0):
-        p.clicked.append(what)
-        if what == "Continue to PayPal":
-            p.url = "https://www.paypal.com/checkoutnow?token=X"
-
-    def click_loc(p, loc, tries=3):
-        p.clicked.append("Pay")
-        p.url = "https://au.costway.com/checkout/onepage/success/"
-
-    monkeypatch.setattr(cw, "first_visible", fv)
-    monkeypatch.setattr(cw, "click_required", click_required)
-    monkeypatch.setattr(cw, "click_loc", click_loc)
-    monkeypatch.setattr(cw, "settle", lambda p, ms=0: None)
-
-
-def test_paypal_continue_then_pay_reads_order_number(monkeypatch):
-    page = PPPage()
-    _patch(monkeypatch, page)
-    v = vendor()
-    v.submit_order(page)
-    assert page.clicked == ["Continue to PayPal", "Pay"]
-    assert v.read_order_number(page) == "4000123456"
-
-
-def test_paypal_login_wall_pays_nothing(monkeypatch):
-    page = PPPage(login=True)
-    _patch(monkeypatch, page)
-    with pytest.raises(VendorError):
-        vendor().submit_order(page)
-    assert "Pay" not in page.clicked
-
-
-def test_paypal_without_pay_button_pays_nothing(monkeypatch):
-    page = PPPage(pay_button=False)
-    _patch(monkeypatch, page)
-    with pytest.raises(VendorError, match="nothing was paid"):
-        vendor().submit_order(page)
-    assert "Pay" not in page.clicked
-
-
 class Card:
     def __init__(self, page, i):
         self.page, self.i = page, i
@@ -294,20 +224,3 @@ def test_no_customer_address_stops(monkeypatch):
     page = AddrPage([("Me 1 Home Rd Sydney 2150", True)])
     with pytest.raises(VendorError, match="not the selected delivery address"):
         vendor().check_selected_address(page, Line())
-
-
-def test_pay_button_found_after_paypal_reloads(monkeypatch):
-    import vendors.costway_au as cw
-    page = PPPage()
-    _patch(monkeypatch, page)
-    calls = {"n": 0}
-
-    def fv(p, sels, timeout=0):
-        if sels is cw.PAYPAL_PAY and "paypal.com" in p.url:
-            calls["n"] += 1
-            return "pay" if calls["n"] >= 5 else None  # still reloading for the first checks
-        return None
-    monkeypatch.setattr(cw, "first_visible", fv)
-    v = vendor()
-    v.submit_order(page)
-    assert page.clicked == ["Continue to PayPal", "Pay"] and v.read_order_number(page) == "4000123456"

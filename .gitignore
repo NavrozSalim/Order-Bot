@@ -13,3 +13,5 @@ agent.json
 work/
 portals.json
 logs/
+# the purchase card (ORDERBOT_CARD_*): never committed
+.env
